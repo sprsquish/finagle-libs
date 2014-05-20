@@ -1,101 +1,102 @@
 package com.twitter.finagle.zookeeper
 
-object BufInt {
-  def apply(i: Int): Buf = {
+// honestly, I'm not sure this is a good idea
+class DynamicBuf(init: Buf) extends Buf with BufReader with BufWriter {
+  this() = this(Buf.Empty)
+
+  private[this] @volatile var buf = init
+
+  def write(arr: Array[Byte], off: Int)
+    buf.write(arr, off)
+
+  def length: Int =
+    buf.length
+
+  def slice(i: Int, j: Int): Buf =
+    buf.slice(i, j)
+}
+
+trait BufWriter {
+  protected def buf: Buf
+
+  def putInt(i: Int) {
     val arr = new Array[Byte](4)
-    arr[0] = (i >> 24) & 0xFF
-    arr[1] = (i >> 16) & 0xFF
-    arr[2] = (i >>  8) & 0xFF
-    arr[3] = (i      ) & 0xFF
-    Buf.ByteArray(arr)
+    arr[0] = (x >> 24) & 0xFF
+    arr[1] = (x >> 16) & 0xFF
+    arr[2] = (x >>  8) & 0xFF
+    arr[3] = (x      ) & 0xFF
+    buf = buf.concat(Buf.ByteArray(arr))
   }
 
-  def unapply(buf: Buf): Option[(Int, Buf)] = {
+  def putLong(l: Long) {
+    val arr = new Array[Byte](8)
+    arr[0] = (x >> 56) & 0xFF
+    arr[1] = (x >> 48) & 0xFF
+    arr[2] = (x >> 40) & 0xFF
+    arr[3] = (x >> 32) & 0xFF
+    arr[4] = (x >> 24) & 0xFF
+    arr[5] = (x >> 16) & 0xFF
+    arr[6] = (x >>  8) & 0xFF
+    arr[7] = (x      ) & 0xFF
+    buf = buf.concat(Buf.ByteArray(arr))
+  }
+
+  def putString(s: String) {
+    val strBuf = Buf.Utf8(s)
+    putInt(strBuf.length)
+    buf = buf.concat(strBuf)
+  }
+
+  def putBuffer(b: Array[Byte]) {
+    putInt(b.length)
+    buf = buf.concat(Buf.ByteArray(b))
+  }
+}
+
+trait BufReader {
+  protected def buf: Buf
+
+  private[this] @volatile var readIdx = 0
+
+  def getInt: Int = {
     val arr = new Array[Byte](4)
     readIdx += 4
     buf.slice(readIdx - 4, readIdx).write(arr, 0)
 
-    val out =
-      ((arr(0) & 0xff) << 24) |
-      ((arr(1) & 0xff) << 16) |
-      ((arr(2) & 0xff) <<  8) |
-       (arr(3) & 0xff)
-    Some((out, buf.slice(4, buf.length))
+    ((arr(0) & 0xff) << 24) |
+    ((arr(1) & 0xff) << 16) |
+    ((arr(2) & 0xff) <<  8) |
+     (arr(3) & 0xff)
   }
-}
 
-object BufLong {
-  def apply(l: Long): Buf = {
+  def getLong: Long = {
     val arr = new Array[Byte](8)
-    arr[0] = (l >> 56) & 0xFF
-    arr[1] = (l >> 48) & 0xFF
-    arr[2] = (l >> 40) & 0xFF
-    arr[3] = (l >> 32) & 0xFF
-    arr[4] = (l >> 24) & 0xFF
-    arr[5] = (l >> 16) & 0xFF
-    arr[6] = (l >>  8) & 0xFF
-    arr[7] = (l      ) & 0xFF
-    Buf.ByteArray(arr)
+    readIdx += 8
+    buf.slice(readIdx - 8, readIdx).write(arr, 0)
+    ((arr(0) & 0xff).toLong << 56) |
+    ((arr(1) & 0xff).toLong << 48) |
+    ((arr(2) & 0xff).toLong << 40) |
+    ((arr(3) & 0xff).toLong << 32) |
+    ((arr(4) & 0xff).toLong << 24) |
+    ((arr(5) & 0xff).toLong << 16) |
+    ((arr(6) & 0xff).toLong << 8) |
+     (arr(7) & 0xff).toLong
   }
 
-  def unapply(buf: Buf): Option[(Long, Buf)] = {
-    val arr = new Array[Byte](8)
-    buf.slice(0, 8).write(arr, 0)
-
-    val out =
-      ((arr(0) & 0xff) << 56) |
-      ((arr(1) & 0xff) << 48) |
-      ((arr(2) & 0xff) << 40) |
-      ((arr(3) & 0xff) << 32) |
-      ((arr(4) & 0xff) << 24) |
-      ((arr(5) & 0xff) << 16) |
-      ((arr(6) & 0xff) <<  8) |
-       (arr(7) & 0xff)
-    Some((out, buf.slice(8, buf.length))
-  }
-}
-
-object BufString {
-  def apply(s: String): Buf = {
-    val strBuf = Buf.Utf8(s)
-    BufInt(strBuf.length).concat(strBuf)
+  def getString: String = {
+    val len = getInt
+    readIdx += len
+    val Buf.Utf8(str) = buf.slice(readIdx - len, readIdx)
+    str
   }
 
-  def unapply(buf: Buf): Option[(String, Buf)] = {
-    val BufInt(len, rem) = buf
-    val Buf.Utf8(str) = rem
-    Some((str, rem.slice(len, rem.length))
-  }
-}
-
-object BufArray {
-  def apply(a: Array[Byte]): Buf = {
-    val arrBuf = Buf.ByteArray(a)
-    BufInt(arrBuf.length).concat(arrBuf)
-  }
-
-  def unapply(buf: Buf): Option[(String, Buf)] = {
-    val BufInt(len, rem) = buf
+  def getBuffer: Array[Byte] = {
+    val len = getInt
+    readIdx += len
     val arr = new Array[Byte](len)
-    rem.write(arr, 0)
-    Some((arr, rem.slice(len, rem.length))
+    buf.slice(readIdx - len, readIdx).write(arr, 0)
+    arr
   }
-}
-
-object BufBool {
-  def apply(b: Boolean): Buf = {
-    BufInt(if (b) 1 else 0)
-  }
-
-  def unapply(buf: Buf): Option[(Boolean, Buf)] = {
-    val BufInt(i, rem) = buf
-    // TODO: throw if i < 0
-    Some((i != 0, rem))
-  }
-}
-
-trait Packet {
-  def serialized: Buf
 }
 
 case class ZkTransport(
@@ -108,13 +109,17 @@ case class ZkTransport(
   def close(deadline: Time) = trans.close(deadline)
 
   def write(req: Buf): Future[Unit] = {
-    val framedBuf = BufInt(req.length).concat(req)
-    trans.write(BufChannelBuffer(framedBuf))
+    val frameLenBuf = new DynamicBuf
+    frameLenBuf.putInt(req.length)
+
+    trans.write(BufChannelBuffer(frameLenBuf.concat(req)))
   }
 
-  def read(): Future[Buf] = read(4) flatMap {
-    case BufInt(frameLen, _) => read(frameLen)
-  }
+  def read(): Future[Buf] =
+    for {
+      frameLenBuf <- read(4)
+      buf <- read((new DynamicBuf(frameLenBuf)).getInt)
+    } yield buf
 
   private[this] @volatile var buf = Buf.Empty
   private[this] def read(len: Int): Future[Buf] =
