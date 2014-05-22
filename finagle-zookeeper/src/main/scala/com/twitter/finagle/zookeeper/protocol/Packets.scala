@@ -12,9 +12,8 @@ case class Id(scheme: String, id: String) extends Packet {
 
 object Id {
   def unapply(buf: Buf): Option[(Id, Buf)] = {
-    val BufString(scheme, rem0) = buf
-    val BufString(id, rem1) = rem0
-    Some((new Id(scheme, id), rem1)
+    val BufString(scheme, BufString(id, rem)) = buf
+    Some((new Id(scheme, id), rem)
   }
 }
 
@@ -26,9 +25,8 @@ case class ACL(perms: Int, id: Id) extends Packet {
 
 object ACL {
   def unapply(buf: Buf): Option[(ACL, Buf)] = {
-    val BufInt(perms, rem0) = buf
-    val Id(id, rem1) = rem0
-    Some((new ACL(perms, id), rem1))
+    val BufInt(perms, Id(id, rem)) = buf
+    Some((new ACL(perms, id), rem))
   }
 }
 
@@ -61,20 +59,19 @@ case class Stat(
 
 object Stat {
   def unapply(buf: Buf): Option[(Stat, Buf)] = {
-    val BufLong(czxid, rem0) = buf
-    val BufLong(mzxid, rem1) = rem0
-    val BufLong(ctime, rem2) = rem1
-    val BufLong(mtime, rem3) = rem2
-    val BufInt(version, rem4) = rem3
-    val BufInt(cversion, rem5) = rem4
-    val BufInt(aversion, rem6) = rem5
-    val BufLong(ephemeralOwner, rem7) = rem6
-    val BufInt(dataLength, rem8) = rem7
-    val BufInt(numChildren, rem9) = rem8
-    val BufLong(pzxid, rem10) = rem9
-    Some((
-      new Stat(czxid, mzcid, ctime, mtime, version, cversion, aversion, ephermalOwner, dataLength, numChildren, pzxid),
-      rem10))
+    val BufLong(czxid,
+        BufLong(mzxid,
+        BufLong(ctime,
+        BufLong(mtime,
+        BufInt(version,
+        BufInt(cversion,
+        BufInt(aversion,
+        BufLong(ephemeralOwner,
+        BufInt(dataLength,
+        BufInt(numChildren,
+        BufLong(pzxid, rem)
+    )))))))))) = buf
+    Some((new Stat(czxid, mzcid, ctime, mtime, version, cversion, aversion, ephermalOwner, dataLength, numChildren, pzxid), rem))
   }
 }
 
@@ -103,18 +100,17 @@ case class StatPersisted(
 
 object StatPersisted {
   def unapply(buf: Buf): Option[(StatPersisted, Buf)] = {
-    val BufLong(czxid, rem0) = buf
-    val BufLong(mzxid, rem1) = rem0
-    val BufLong(ctime, rem2) = rem1
-    val BufLong(mtime, rem3) = rem2
-    val BufInt(version, rem4) = rem3
-    val BufInt(cversion, rem5) = rem4
-    val BufInt(aversion, rem6) = rem5
-    val BufLong(ephemeralOwner, rem7) = rem6
-    val BufLong(pzxid, rem8) = rem7
-    Some((
-      new StatPersisted(czxid, mzcid, ctime, mtime, version, cversion, aversion, ephermalOwner, pzxid),
-      rem8))
+    val BufLong(czxid,
+        BufLong(mzxid,
+        BufLong(ctime,
+        BufLong(mtime,
+        BufInt(version,
+        BufInt(cversion,
+        BufInt(aversion,
+        BufLong(ephemeralOwner,
+        BufLong(pzxid, rem)
+    )))))))) = buf
+    Some((new StatPersisted(czxid, mzcid, ctime, mtime, version, cversion, aversion, ephermalOwner, pzxid), rem))
   }
 }
 
@@ -223,7 +219,7 @@ case class MultiHeader(
 }
 
 object MultiHeader {
-  def unapply(buf: Buf): Option[(MultiHeader , Buf)] = {
+  def unapply(buf: Buf): Option[(MultiHeader, Buf)] = {
     val BufInt(typ, rem0) = buf
     val BufBool(done, rem1) = rem0
     val BufInt(err, rem2) = rem1
@@ -240,6 +236,31 @@ case class AuthPacket(
     .concat(BufInt(typ))
     .concat(BufString(scheme))
     .concat(BufArray(auth))
+}
+
+type BufExtractor[T] {
+  def unapply(buf: Buf): Option[(T, Buf)]
+}
+
+class ~[A <: BufExtractor, B <: BufExtractor[_]](left: A, right: B) extends BufExtractor[A] {
+  def unapply(buf: Buf): Option[(A, Buf)] = {
+    val left(a, rem0) = buf
+    val right(b, rem1) = rem0
+    Some((a, b, rem1))
+  }
+}
+
+object AuthPacket {
+  def ~(a: BufExtractor, b: BufExtractor):
+  def unapply(buf: Buf): Option[(AuthPacket, Buf)] = {
+    val BufInt(typ) ~ BufString(scheme) ~ BufArray(auth) ~ rem = buf
+    Some((AuthPacket(typ, scheme, auth), rem2))
+
+    Some(
+    val BufInt(typ, rem0) = buf
+    val BufString(scheme, rem1) = rem0
+    val BufArray(auth, rem2) = rem1
+  }
 }
 
 case class GetDataRequest(
