@@ -21,7 +21,7 @@ object BufInt {
       ((arr(1) & 0xff) << 16) |
       ((arr(2) & 0xff) <<  8) |
        (arr(3) & 0xff)
-    Some((out, buf.slice(4, buf.length))
+    Some(out, buf.slice(4, buf.length))
   }
 }
 
@@ -52,7 +52,7 @@ object BufLong {
       ((arr(5) & 0xff).toLong << 16) |
       ((arr(6) & 0xff).toLong <<  8) |
        (arr(7) & 0xff).toLong
-    Some((out, buf.slice(8, buf.length))
+    Some(out, buf.slice(8, buf.length))
   }
 }
 
@@ -65,7 +65,7 @@ object BufString {
   def unapply(buf: Buf): Option[(String, Buf)] = {
     val BufInt(len, rem) = buf
     val Buf.Utf8(str) = rem
-    Some((str, rem.slice(len, rem.length))
+    Some(str, rem.slice(len, rem.length))
   }
 }
 
@@ -79,7 +79,7 @@ object BufArray {
     val BufInt(len, rem) = buf
     val arr = new Array[Byte](len)
     rem.write(arr, 0)
-    Some((arr, rem.slice(len, rem.length))
+    Some(arr, rem.slice(len, rem.length))
   }
 }
 
@@ -91,7 +91,7 @@ object BufBool {
   def unapply(buf: Buf): Option[(Boolean, Buf)] = {
     val BufInt(i, rem) = buf
     // TODO: throw if i < 0
-    Some((i != 0, rem))
+    Some(i != 0, rem)
   }
 }
 
@@ -112,6 +112,21 @@ object BufSeq {
       i
     }
 
-    Some((seq, rem))
+    Some(seq, rem)
   }
+}
+
+object BufSeqString {
+  def apply(s: Seq[String]): Buf = BufSeq[String](s, BufString.apply)
+  def unapply(buf: Buf): Option[(String, Buf)] = BufSeq.unapply[String](buf, BufString.unapply)
+}
+
+object BufSeqACL {
+  def apply(s: Seq[ACL]): Buf = BufSeq[ACL](s, ACL.apply)
+  def unapply(buf: Buf): Option[(ACL, Buf)] = BufSeq.unapply[ACL](buf, ACL.unapply)
+}
+
+object BufSeqId {
+  def apply(s: Seq[Id]): Buf = BufSeq[Id](s, Id.apply)
+  def unapply(buf: Buf): Option[(Id, Buf)] = BufSeq.unapply[Id](buf, Id.unapply)
 }

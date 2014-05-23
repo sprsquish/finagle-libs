@@ -3,9 +3,10 @@ package com.twitter.finagle.zookeeper
 private[finagle] class ClientDispatcher(
   watchManager: WatchManager,
   trans: Transport[Buf, Buf]
-) extends Service[Request, Response] {
+) extends Service[Packet, Packet] {
+  case class Request(xid: Int, reqPacket: Packet)
 
-  private[this] queue = new LinkedBlockingQueue[(Request, Promise[Reply])]()
+  private[this] queue = new LinkedBlockingQueue[(Request, Promise[Packet])]()
 
   private[this] def actOnRead(buf: Buf): Future[Unit] = {
     val ReplyHeader(replyHeader, rem) = buf
