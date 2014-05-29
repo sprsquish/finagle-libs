@@ -4,6 +4,14 @@ sealed trait Packet {
   def buf: Buf
 }
 
+// Special Case Packets
+
+trait EmptyPacket { def buf: Buf = Buf.Empty } extends Packet
+object EmptyPacket extends EmptyPacket
+
+
+// Protocol Packets
+
 case class Id(scheme: String, id: String) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(scheme))
@@ -243,6 +251,24 @@ object AuthPacket {
   def unapply(buf: Buf): Option[(AuthPacket, Buf)] = {
     val BufInt(typ, BufString(scheme, BufArray(auth, rem))) = buf
     Some(AuthPacket(typ, scheme, auth), rem)
+  }
+}
+
+case class ReplyHeader(
+  xid: Int,
+  zxid: Long,
+  err: Int
+) extends Packet {
+  def bud: Buf = Buf.Empty
+    .concat(BufInt(xid))
+    .concat(BufLong(zxid))
+    .concat(BufInt(err))
+}
+
+object ReplyHeader {
+  def unapply(buf: Buf): Option[(ReplyHeader, Buf)] = {
+    val BufInt(xid, BufLong(zxid, BufInt(err, rem))) = buf
+    Some(ReplyHeader(xid, zxid, err), rem)
   }
 }
 
@@ -695,7 +721,7 @@ case class GetACLResponse(
   stat: Stat
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(acl.foldLeft(BufInt(acl.size))((b,a) => b.concat(a.buf)))
+    .concat(BufSeqACL(acl))
     .concat(stat.buf)
 }
 
@@ -836,7 +862,7 @@ case class CreateTxnV0(
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufArray(data))
-    .concat(acl.foldLeft(BufInt(acl.size))((b,a) => b.concat(a.buf)))
+    .concat(BufSeqACL(acl))
     .concat(BufBool(ephemeral))
 }
 
@@ -994,7 +1020,7 @@ object Txn {
 case class MultiTxn(
   txns: Seq[Txn]
 ) extends Packet {
-  def buf: Buf = txns.foldLeft(BufInt(txns.size))((b,t) => b.concat(t.buf))
+  def buf: Buf = BufSeq[Txn](txns, Txn.apply)
 }
 
 object MultiTxn {

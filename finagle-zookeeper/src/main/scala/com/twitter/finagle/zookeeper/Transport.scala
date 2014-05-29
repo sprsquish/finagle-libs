@@ -12,8 +12,9 @@ case class Transport(
   def write(req: Buf): Future[Unit] =
     trans.write(BufChannelBuffer(BufInt(req.length).concat(req)))
 
+  // the dispatcher runs a single read loop. this is safe
   def read(): Future[Buf] =
-    read(4) flatMap { case BufInt(len) => read(len) }
+    read(4) flatMap { case BufInt(len, _) => read(len) }
 
   private[this] @volatile var buf = Buf.Empty
   private[this] def read(len: Int): Future[Buf] =
