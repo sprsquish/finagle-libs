@@ -425,6 +425,16 @@ object DeleteRequest {
   }
 }
 
+// a fake response because finagle requires one
+case class DeleteResponse() extends Packet {
+  def buf: Buf = Buf.Empty
+}
+
+object DeleteResponse {
+  def unapply(buf: Buf): Option[(DeleteResponse, Buf)] =
+    Some(DeleteResponse(), buf)
+}
+
 case class GetChildrenRequest(
   path: String,
   watch: Boolean

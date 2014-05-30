@@ -5,39 +5,43 @@ trait WatchManager {
     apply(WatchedEvent(evt))
 
   def apply(evt: WatchedEvent): Future[Unit]
-  def addExistWatch(path: String)(watcher: Promise[WatchedEvent])
-  def addDataWatch(path: String)(watcher: Promise[WatchedEvent])
-  def addChildWatch(path: String)(watcher: Promise[WatchedEvent])
+
+  def addExistWatch(path: String): Future[WatchedEvent] =
+  def addDataWatch(path: String): Future[WatchedEvent] =
+  def addChildWatch(path: String): Future[WatchedEvent] =
 }
 
 object DefaultWatchManager extends WatchManager {
-  private type Watch = Promise[WatchedEvent]
-  private type Watches = Set[Watch]
-
-  private[this] val dataTable = mutable.Map.emtpy[String, Watches]
-  private[this] val existTable = mutable.Map.emtpy[String, Watches]
-  private[this] val childTable = mutable.Map.emtpy[String, Watches]
+  private[this] val dataTable = mutable.Map.emtpy[String, Promise[WatchedEvent]]
+  private[this] val existTable = mutable.Map.emtpy[String, Promise[WatchedEvent]]
+  private[this] val childTable = mutable.Map.emtpy[String, Promise[WatchedEvent]]
 
   // TODO: should this be shunted off to another threadpool?
   // for now the read thread will end up satisfying all watches
   def apply(evt: WatchedEvent): Future[Unit] = {
     val watches = evt.typ match {
       case EventType.None =>
-        watchesFor(dataTable, None) +
-        watchesFor(existTable, None) +
-        watchesFor(childTable, None)
+        Seq(
+          watchesFor(dataTable, None),
+          watchesFor(existTable, None),
+          watchesFor(childTable, None)
+        ).flatten
 
       case EventType.NodeDataChanged | EventType.NodeCreated =>
-        watchesFor(dataTable, evt.path) +
-        watchesFor(existTable, evt.path) +
+        Seq(
+          watchesFor(dataTable, evt.path),
+          watchesFor(existTable, evt.path)
+        ).flatten
 
       case EventType.NodeChildrenChanged =>
         watchesFor(childTable, evt.path)
 
       case EventType.NodeDeleted =>
-        watchesFor(dataTable, evt.path) +
-        watchesFor(existTable, evt.path) +
-        watchesFor(childTable, evt.path)
+        Seq(
+          watchesFor(dataTable, evt.path),
+          watchesFor(existTable, evt.path),
+          watchesFor(childTable, evt.path)
+        ).flatten
 
       case _ =>
     }
@@ -47,30 +51,25 @@ object DefaultWatchManager extends WatchManager {
     Future.Done
   }
 
-  private[this] def watchesFor(table: mutable.Map[String, Watches], path: Option[String]): Watches = table.synchronized {
-    (path match {
-      case Some(p) => table.remove(p)
-      case None => table.get(p)
-    }).getOrElse(Set.empty[Watches])
-  }
+  private[this] def watchesFor(
+    table: mutable.Map[String, Promise[WatchedEvent]],
+    path: Option[String]
+  ): Seq[Promise[WatchedEvent]] =
+    table.synchronized {
+      path match {
+        case Some(p) => table.remove(p).toSeq
+        case None => table.values()
+      }
+    }
 
-  private[this] def addWatch(
-    table: mutable.Map[String, Watches],
-    path: String,
-    watcher: Watch
-  ): Unit = table.synchronized {
-    val watchSet = table.getOrElse(path, Set.empty[Watch])
-    watchTable(path) = watchSet + watcher
-  }
+  def addExistWatch(path: String): Future[WatchedEvent] =
+    existWatch.synchronized { existWatch.getOrElseUpdate(path, new Promise[WatchedEvent]) }
 
-  def addExistWatch(path: String)(watcher: Watch): Unit =
-    addWatch(existWatches, path, watcher)
+  def addDataWatch(path: String): Future[WatchedEvent] =
+    dataWatch.synchronized { dataWatch.getOrElseUpdate(path, new Promise[WatchedEvent]) }
 
-  def addDataWatch(path: String)(watcher: Watch): Unit =
-    addWatch(dataWatches, path, watcher)
-
-  def addChildWatch(path: String)(watcher: Watch): Unit =
-    addWatch(childWatches, path, watcher)
+  def addChildWatch(path: String): Future[WatchedEvent] =
+    childWatch.synchronized { childWatch.getOrElseUpdate(path, new Promise[WatchedEvent]) }
 }
 
 case class WatchedEvent(typ: EventType, state: KeeperState, path: Option[String] = None)

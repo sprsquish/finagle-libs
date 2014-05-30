@@ -11,10 +11,10 @@ object State {
   object NotConnected extends State
 }
 
-sealed trait ExistsResponse
+sealed trait ExistsResponse { val watch: Option[Promise[WatchedEvent]] }
 object ExistsResponse {
-  case class NodeStat(stat: Stat) extends ExistsResponse
-  object NoNode extends ExistsResponse
+  case class NodeStat(stat: Stat, watch: Option[Promise[WatchedEvent]]) extends ExistsResponse
+  case class NoNode(watch: Option[Promise[WatchedEvent]]) extends ExistsResponse
 }
 
 class ZkClient(
@@ -51,24 +51,20 @@ class ZkClient(
 
   def create(path: String, data: Array[Byte], acl: Seq[ACL], createMode: CreateMode): Future[String] = {
     val req = PacketRequest(OpCode.Create, CreateRequest(path, data, acl, 0), CreateResponse.unapply)
-    write[CreateResponse](req).map(_.path)
+    write[CreateResponse](req) map { _.path }
   }
 
   def delete(path: String, version: Int): Future[Unit] = {
     write[DeleteResponse](PacketRequest(OpCode.Delete, DeleteRequest(path, version), DeleteResponse.unapply)).unit
   }
 
-  def watchExists(path: String): Future[WatchedEvent] = {
-    val p = new Promise[WatchedEvent]
-    exists(path, Some(p)) flatMap { _ => p }
-  }
+  def exists(path: String, watch: Boolean = false): Future[Stat] = {
+    val watchFuture = if (watch) Some(watchManager.watchExists(path)) else None
 
-  def exists(path: String, watch: Option[Promise[WatchedEvent]] = None): Future[Stat] = {
-    watch foreach watchManager.addWatch(path)
-    val req = PacketRequest(OpCode.Exists, ExistsRequest(path, watch.isDefined), ExistsResponse.unapply)
+    val req = PacketRequest(OpCode.Exists, ExistsRequest(path, watch), ExistsResponse.unapply)
     write[ExistsResponse](req) handle {
-      case Return(ExistsResponse(stat)) => Future.value(ExistsResponse.NodeStat(stat))
-      case Throw(KeeperException.NoNode) => Future.value(ExistsResponse.NoNode)
+      case Return(ExistsResponse(stat)) => Future.value(ExistsResponse.NodeStat(stat, watchFuture))
+      case Throw(KeeperException.NoNode) => Future.value(ExistsResponse.NoNode(watchFuture)
     }
   }
 
