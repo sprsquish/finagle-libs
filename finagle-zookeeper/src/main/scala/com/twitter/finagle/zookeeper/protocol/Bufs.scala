@@ -5,10 +5,10 @@ import com.twitter.io.Buf
 object BufInt {
   def apply(i: Int): Buf = {
     val arr = new Array[Byte](4)
-    arr[0] = ((i >> 24) & 0xff).toByte
-    arr[1] = ((i >> 16) & 0xff).toByte
-    arr[2] = ((i >>  8) & 0xff).toByte
-    arr[3] = ((i      ) & 0xff).toByte
+    arr(0) = ((i >> 24) & 0xff).toByte
+    arr(1) = ((i >> 16) & 0xff).toByte
+    arr(2) = ((i >>  8) & 0xff).toByte
+    arr(3) = ((i      ) & 0xff).toByte
     Buf.ByteArray(arr)
   }
 
@@ -28,14 +28,14 @@ object BufInt {
 object BufLong {
   def apply(l: Long): Buf = {
     val arr = new Array[Byte](8)
-    arr[0] = ((l >> 56) & 0xff).toByte
-    arr[1] = ((l >> 48) & 0xff).toByte
-    arr[2] = ((l >> 40) & 0xff).toByte
-    arr[3] = ((l >> 32) & 0xff).toByte
-    arr[4] = ((l >> 24) & 0xff).toByte
-    arr[5] = ((l >> 16) & 0xff).toByte
-    arr[6] = ((l >>  8) & 0xff).toByte
-    arr[7] = ((l      ) & 0xff).toByte
+    arr(0) = ((l >> 56) & 0xff).toByte
+    arr(1) = ((l >> 48) & 0xff).toByte
+    arr(2) = ((l >> 40) & 0xff).toByte
+    arr(3) = ((l >> 32) & 0xff).toByte
+    arr(4) = ((l >> 24) & 0xff).toByte
+    arr(5) = ((l >> 16) & 0xff).toByte
+    arr(6) = ((l >>  8) & 0xff).toByte
+    arr(7) = ((l      ) & 0xff).toByte
     Buf.ByteArray(arr)
   }
 
@@ -75,7 +75,7 @@ object BufArray {
     BufInt(arrBuf.length).concat(arrBuf)
   }
 
-  def unapply(buf: Buf): Option[(String, Buf)] = {
+  def unapply(buf: Buf): Option[(Array[Byte], Buf)] = {
     val BufInt(len, rem) = buf
     val arr = new Array[Byte](len)
     rem.write(arr, 0)
@@ -99,34 +99,40 @@ object BufSeq {
   def apply[T](s: Seq[T], toBuf: T => Buf): Buf =
     s.foldLeft(BufInt(s.size)) { (b, i) => b.concat(toBuf(i)) }
 
-  def unapply[T](x: (Buf, Buf => (T, Buf))): (Seq[T], Buf) = {
+  def unapply[T](x: (Buf, Buf => Option[(T, Buf)])): Option[(Seq[T], Buf)] = {
     val (buf, fromBuf) = x
 
     var rem: Buf = Buf.Empty
     val BufInt(len, r) = buf
     rem = r
 
-    val seq = (0 until len).toSeq map { _ =>
-      val (i, r) = fromBuf(rem)
-      rem = r
-      i
+    val items = (0 until len) flatMap { _ =>
+      fromBuf(rem) map { case (i, r) =>
+        rem = r
+        i
+      }
     }
 
-    Some(seq, rem)
+    Some(items, rem)
   }
 }
 
 object BufSeqString {
   def apply(s: Seq[String]): Buf = BufSeq[String](s, BufString.apply)
-  def unapply(buf: Buf): Option[(String, Buf)] = BufSeq.unapply[String](buf, BufString.unapply)
+  def unapply(buf: Buf): Option[(Seq[String], Buf)] = BufSeq.unapply[String]((buf, BufString.unapply))
 }
 
 object BufSeqACL {
-  def apply(s: Seq[ACL]): Buf = BufSeq[ACL](s, ACL.apply)
-  def unapply(buf: Buf): Option[(ACL, Buf)] = BufSeq.unapply[ACL](buf, ACL.unapply)
+  def apply(s: Seq[ACL]): Buf = BufSeq[ACL](s, _.buf)
+  def unapply(buf: Buf): Option[(Seq[ACL], Buf)] = BufSeq.unapply[ACL]((buf, ACL.unapply))
 }
 
 object BufSeqId {
-  def apply(s: Seq[Id]): Buf = BufSeq[Id](s, Id.apply)
-  def unapply(buf: Buf): Option[(Id, Buf)] = BufSeq.unapply[Id](buf, Id.unapply)
+  def apply(s: Seq[Id]): Buf = BufSeq[Id](s, _.buf)
+  def unapply(buf: Buf): Option[(Seq[Id], Buf)] = BufSeq.unapply[Id]((buf, Id.unapply))
+}
+
+object BufSeqTxn {
+  def apply(s: Seq[Txn]): Buf = BufSeq[Txn](s, _.buf)
+  def unapply(buf: Buf): Option[(Seq[Txn], Buf)] = BufSeq.unapply[Txn]((buf, Txn.unapply))
 }

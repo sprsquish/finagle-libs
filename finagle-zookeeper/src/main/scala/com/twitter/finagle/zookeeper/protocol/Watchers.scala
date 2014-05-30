@@ -1,20 +1,24 @@
 package com.twitter.finagle.zookeeper.protocol
 
+import com.twitter.finagle.NoStacktrace
+import com.twitter.util.{Future, Promise}
+import scala.collection.mutable
+
 trait WatchManager {
   def apply(evt: WatcherEvent): Future[Unit] =
     apply(WatchedEvent(evt))
 
   def apply(evt: WatchedEvent): Future[Unit]
 
-  def addExistWatch(path: String): Future[WatchedEvent] =
-  def addDataWatch(path: String): Future[WatchedEvent] =
-  def addChildWatch(path: String): Future[WatchedEvent] =
+  def existsWatch(path: String): Future[WatchedEvent]
+  def dataWatch(path: String): Future[WatchedEvent]
+  def childrenWatch(path: String): Future[WatchedEvent]
 }
 
 object DefaultWatchManager extends WatchManager {
-  private[this] val dataTable = mutable.Map.emtpy[String, Promise[WatchedEvent]]
-  private[this] val existTable = mutable.Map.emtpy[String, Promise[WatchedEvent]]
-  private[this] val childTable = mutable.Map.emtpy[String, Promise[WatchedEvent]]
+  private[this] val dataTable = new mutable.HashMap[String, Promise[WatchedEvent]]
+  private[this] val existTable = new mutable.HashMap[String, Promise[WatchedEvent]]
+  private[this] val childTable = new mutable.HashMap[String, Promise[WatchedEvent]]
 
   // TODO: should this be shunted off to another threadpool?
   // for now the read thread will end up satisfying all watches
@@ -44,6 +48,7 @@ object DefaultWatchManager extends WatchManager {
         ).flatten
 
       case _ =>
+        Seq.empty[Promise[WatchedEvent]]
     }
 
     watches foreach { _.setValue(evt) }
@@ -58,18 +63,21 @@ object DefaultWatchManager extends WatchManager {
     table.synchronized {
       path match {
         case Some(p) => table.remove(p).toSeq
-        case None => table.values()
+        case None =>
+          val watches = table.values.toList
+          table.clear()
+          watches
       }
     }
 
-  def addExistWatch(path: String): Future[WatchedEvent] =
-    existWatch.synchronized { existWatch.getOrElseUpdate(path, new Promise[WatchedEvent]) }
+  def existsWatch(path: String): Future[WatchedEvent] =
+    existTable.synchronized { existTable.getOrElseUpdate(path, new Promise[WatchedEvent]) }
 
-  def addDataWatch(path: String): Future[WatchedEvent] =
-    dataWatch.synchronized { dataWatch.getOrElseUpdate(path, new Promise[WatchedEvent]) }
+  def dataWatch(path: String): Future[WatchedEvent] =
+    dataTable.synchronized { dataTable.getOrElseUpdate(path, new Promise[WatchedEvent]) }
 
-  def addChildWatch(path: String): Future[WatchedEvent] =
-    childWatch.synchronized { childWatch.getOrElseUpdate(path, new Promise[WatchedEvent]) }
+  def childrenWatch(path: String): Future[WatchedEvent] =
+    childTable.synchronized { childTable.getOrElseUpdate(path, new Promise[WatchedEvent]) }
 }
 
 case class WatchedEvent(typ: EventType, state: KeeperState, path: Option[String] = None)
@@ -158,7 +166,7 @@ object KeeperState {
   }
 }
 
-sealed abstract class KeeperException(val code: Int) extends NoStackTrace
+sealed abstract class KeeperException(val code: Int) extends Exception with NoStacktrace
 object KeeperException {
   object Ok extends KeeperException(0)
   object SystemError extends KeeperException(-1)
@@ -191,7 +199,7 @@ object KeeperException {
   def apply(code: Int): KeeperException = code match {
     case 0 => Ok
     case -1 => SystemError
-    case -2 => RuntimeInconcsistency
+    case -2 => RuntimeInconsistency
     case -3 => DataInconsistency
     case -4 => ConnectionLoss
     case -5 => MarshallingError
@@ -218,5 +226,5 @@ object KeeperException {
   }
 
   def unapply(code: Int): Option[KeeperException] =
-    try { Some(apply(code)) } catch { _ => None }
+    try { Some(apply(code)) } catch { case _: Throwable => None }
 }

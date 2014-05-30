@@ -68,4 +68,7 @@ object FinagleLibs extends Build {
 
   lazy val finagleWebsocket =
     finProject("websocket")
+
+  lazy val finagleZooKeeper =
+    finProject("zookeeper")
 }

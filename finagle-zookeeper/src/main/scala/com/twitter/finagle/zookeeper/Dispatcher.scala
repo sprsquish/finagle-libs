@@ -1,5 +1,19 @@
 package com.twitter.finagle.zookeeper
 
+import com.twitter.conversions.time._
+import com.twitter.finagle.Service
+import com.twitter.finagle.transport.{Transport => FTransport}
+import com.twitter.finagle.util.DefaultTimer
+import com.twitter.finagle.zookeeper.protocol._
+import com.twitter.io.Buf
+import com.twitter.util._
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
+import java.util.concurrent.LinkedBlockingQueue
+
+class ConnectionAlreadyStarted extends Exception
+class EmptyRequestQueueException(xid: Int) extends Exception
+class OutOfOrderException extends Exception
+
 sealed trait ZkRequest
 case class StartDispatcher(
   watchManager: WatchManager,
@@ -8,26 +22,27 @@ case class StartDispatcher(
 ) extends ZkRequest
 
 case class PacketRequest(
-  opCode: Option[Int],
-  packet: Packet
-  decoder: Buf => Try[Packet]
+  opCode: Int,
+  packet: Packet,
+  decoder: Buf => Option[(Packet, Buf)]
 ) extends ZkRequest
 
-sealed trait ZkResponse { val zxid: Int }
+sealed trait ZkResponse { val zxid: Long }
 case class PacketResponse(
-  zxid: Int,
+  zxid: Long,
   packet: Packet
 ) extends ZkResponse
 
 case class ErrorResponse(
-  zxid: Int,
+  zxid: Long,
   err: KeeperException
 ) extends ZkResponse
 
 private[finagle] class ClientDispatcher(
-  trans: Transport[Buf, Buf],
-  timer: Timer = DefaultTimer.twitter
+  trans: FTransport[Buf, Buf],
+  ttimer: Timer = DefaultTimer.twitter
 ) extends Service[ZkRequest, ZkResponse] {
+  implicit private[this] val timer = ttimer
   private[this] val curXid = new AtomicInteger(0)
   private[this] val started = new AtomicBoolean(false)
   private[this] val queue = new LinkedBlockingQueue[(Int, Buf => Option[(Packet, Buf)], Promise[ZkResponse])]()
@@ -44,7 +59,7 @@ private[finagle] class ClientDispatcher(
       case ReplyHeader(XID.Auth, _, err) =>
         if (err != KeeperException.AuthFailed) Future.Done else {
           // TODO: state = State.AuthFailed
-          watchManager.writeEvent(WatchedEvent(EventType.None, KeeperState.AuthFailed))
+          watchManager(WatchedEvent(EventType.None, KeeperState.AuthFailed))
         }
 
       // notification
@@ -67,26 +82,27 @@ private[finagle] class ClientDispatcher(
         val (reqXid, decoder, promise) = req
 
         // server and client are somehow out of sync. we can't recover
-        if (request.xid != id) throw new OutOfOrderException(request, replyHeader)
+        if (reqXid != xid) throw new OutOfOrderException//(request, replyHeader)
 
         if (err != KeeperException.Ok) promise.setValue(ErrorResponse(zxid, err)) else {
           decoder(rem) match {
-            case Some(packet, _) => promise.setValue(PacketResponse(zxid, packet))
+            case Some((packet, _)) => promise.setValue(PacketResponse(zxid, packet))
             case None => // TODO: invalid response
           }
         }
+        Future.Done
     }
   }
 
   // TODO: calculate how often?
-  private[this] val pingBuf = RequestHeader(XID.Ping, OpCode.Ping).buf
+  private[this] val pingBuf = RequestHeader(XID.Ping, OpCodes.Ping).buf
   private[this] def sendPingLooper(delay: Duration): Future[Unit] =
-    trans.write(pingBuf) delayed(delay)(timer) before sendPingLooper(delay)
+    trans.write(pingBuf) delayed(delay) before sendPingLooper(delay)
 
   private[this] def readLooper(timeout: Duration, watchManager: WatchManager): Future[Unit] =
-    trans.read() within(timeout)(timer) flatMap actOnRead(watchManager) before readLooper(timeout, watchManager)
+    trans.read() within(timeout) flatMap actOnRead(watchManager) before readLooper(timeout, watchManager)
 
-  private[this] def cleanup(exp: Exception): Unit = synchronized {
+  private[this] def cleanup(exp: Throwable): Unit = synchronized {
     var item = queue.poll()
     while (item != null) {
       val (_, _, p) = item
@@ -101,7 +117,7 @@ private[finagle] class ClientDispatcher(
       if (started.getAndSet(true)) Future.exception(new ConnectionAlreadyStarted) else {
 
         trans.write(connPacket.buf) flatMap { _ =>
-          trans.read() flatMap { case ConnectResponse(rep, _) => ZkResponse(0, rep) }
+          trans.read() map { case ConnectResponse(rep, _) => PacketResponse(0, rep) }
         } onSuccess { _ =>
           readLooper(timeout.seconds, watchManager) onFailure cleanup
           sendPingLooper(10.seconds) // max time between pings
@@ -109,9 +125,9 @@ private[finagle] class ClientDispatcher(
       }
 
     case PacketRequest(opCode, packet, decoder) =>
-      val repPromise = new Promise[Packet]
+      val repPromise = new Promise[ZkResponse]
       val xId = curXid.incrementAndGet()
-      val reqBuf = RequestHeader(xId, opCode).buf.concat(p.buf)
+      val reqBuf = RequestHeader(xId, opCode).buf.concat(packet.buf)
       // sync to ensure packets go into the queue and transport at the same time
       synchronized {
         queue.add((xId, decoder, repPromise))

@@ -1,12 +1,14 @@
 package com.twitter.finagle.zookeeper.protocol
 
+import com.twitter.io.Buf
+
 sealed trait Packet {
   def buf: Buf
 }
 
 // Special Case Packets
 
-trait EmptyPacket { def buf: Buf = Buf.Empty } extends Packet
+trait EmptyPacket extends Packet { def buf: Buf = Buf.Empty }
 object EmptyPacket extends EmptyPacket
 
 
@@ -80,7 +82,7 @@ object Stat {
         BufLong(pzxid,
         rem
     ))))))))))) = buf
-    Some(Stat(czxid, mzcid, ctime, mtime, version, cversion, aversion, ephermalOwner, dataLength, numChildren, pzxid), rem)
+    Some(Stat(czxid, mzxid, ctime, mtime, version, cversion, aversion, ephemeralOwner, dataLength, numChildren, pzxid), rem)
   }
 }
 
@@ -88,7 +90,7 @@ case class StatPersisted(
   czxid: Long,
   mzxid: Long,
   ctime: Long,
-  mtime: Long
+  mtime: Long,
   version: Int,
   cversion: Int,
   aversion: Int,
@@ -120,7 +122,7 @@ object StatPersisted {
         BufLong(pzxid,
         rem
     ))))))))) = buf
-    Some(StatPersisted(czxid, mzcid, ctime, mtime, version, cversion, aversion, ephermalOwner, pzxid), rem)
+    Some(StatPersisted(czxid, mzxid, ctime, mtime, version, cversion, aversion, ephemeralOwner, pzxid), rem)
   }
 }
 
@@ -156,7 +158,7 @@ case class ConnectResponse(
   protocolVersion: Int,
   timeOut: Int,
   sessionId: Long,
-  passwd: String
+  passwd: Array[Byte]
 ) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufInt(protocolVersion))
@@ -168,7 +170,7 @@ case class ConnectResponse(
 object ConnectResponse {
   def unapply(buf: Buf): Option[(ConnectResponse, Buf)] = {
     val BufInt(protocolVersion,
-        BufInt(timeOUt,
+        BufInt(timeOut,
         BufLong(sessionId,
         BufArray(passwd,
         rem
@@ -259,7 +261,7 @@ case class ReplyHeader(
   zxid: Long,
   err: Int
 ) extends Packet {
-  def bud: Buf = Buf.Empty
+  def buf: Buf = Buf.Empty
     .concat(BufInt(xid))
     .concat(BufLong(zxid))
     .concat(BufInt(err))
@@ -307,9 +309,9 @@ object SetDataRequest {
 }
 
 case class ReconfigRequest(
-  joiningServers: String
-  leavingServers: String
-  newMembers: String
+  joiningServers: String,
+  leavingServers: String,
+  newMembers: String,
   curConfigId: Long
 ) extends Packet {
   def buf: Buf = Buf.Empty
@@ -327,7 +329,7 @@ object ReconfigRequest {
         BufLong(curConfigId,
         rem
     )))) = buf
-    Some(ReconfigRequest(joiningServer, leavingServer, newMembers, curConfigId), rem)
+    Some(ReconfigRequest(joiningServers, leavingServers, newMembers, curConfigId), rem)
   }
 }
 
@@ -377,10 +379,10 @@ case class SetSASLResponse(
     .concat(BufArray(token))
 }
 
-object SetSASLReSponse {
-  def unapply(buf: Buf): Option[(SetSASLReSponse , Buf)] = {
+object SetSASLResponse {
+  def unapply(buf: Buf): Option[(SetSASLResponse , Buf)] = {
     val BufArray(token, rem) = buf
-    Some(SetSASLReSponse (token), rem)
+    Some(SetSASLResponse(token), rem)
   }
 }
 
@@ -504,8 +506,8 @@ case class GetMaxChildrenResponse(
 
 object GetMaxChildrenResponse {
   def unapply(buf: Buf): Option[(GetMaxChildrenResponse, Buf)] = {
-    val BufString(path, rem) = buf
-    Some(GetMaxChildrenResponse(path), rem)
+    val BufInt(max, rem) = buf
+    Some(GetMaxChildrenResponse(max), rem)
   }
 }
 
@@ -572,7 +574,7 @@ case class SetACLRequest(
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufSeqACL(acl))
-    .concat(BufInt(version)
+    .concat(BufInt(version))
 }
 
 object SetACLRequest {
@@ -658,7 +660,7 @@ case class ExistsRequest(
 ) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufBool(watch)
+    .concat(BufBool(watch))
 }
 
 object ExistsRequest {
@@ -859,7 +861,7 @@ object TxnHeader {
         BufInt(typ,
         rem
     ))))) = buf
-    Some(TxnHeader(cxid, zxid, time, typ), rem)
+    Some(TxnHeader(clientId, cxid, zxid, time, typ), rem)
   }
 }
 
@@ -931,7 +933,7 @@ case class SetDataTxn(
 object SetDataTxn {
   def unapply(buf: Buf): Option[(SetDataTxn, Buf)] = {
     val BufString(path, BufArray(data, BufInt(version, rem))) = buf
-    Some(SetDataTxn(path, data, verison), rem)
+    Some(SetDataTxn(path, data, version), rem)
   }
 }
 
@@ -1030,12 +1032,12 @@ object Txn {
 case class MultiTxn(
   txns: Seq[Txn]
 ) extends Packet {
-  def buf: Buf = BufSeq[Txn](txns, Txn.apply)
+  def buf: Buf = BufSeqTxn(txns)
 }
 
 object MultiTxn {
   def unapply(buf: Buf): Option[(MultiTxn, Buf)] = {
-    val BufSeq[Txn](txns, rem) = (buf, Txn.unapply)
+    val BufSeqTxn(txns, rem) = buf
     Some(MultiTxn(txns), rem)
   }
 }
