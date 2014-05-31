@@ -18,7 +18,6 @@ case class Transport(
 
   def write(req: Buf): Future[Unit] = {
     val framedReq = BufInt(req.length).concat(req)
-//println("buf =>: " + Buf.slowHexString(framedReq))
     val bytes = new Array[Byte](framedReq.length)
     framedReq.write(bytes, 0)
     trans.write(ChannelBuffers.wrappedBuffer(bytes))
@@ -26,7 +25,7 @@ case class Transport(
 
   // the dispatcher runs a single read loop. this is safe
   def read(): Future[Buf] =
-    read(4) flatMap { case BufInt(len, _) => read(len) } //.onSuccess(b => println("buf <=: " + Buf.slowHexString(b))) }
+    read(4) flatMap { case BufInt(len, _) => read(len) }
 
   @volatile private[this] var buf = Buf.Empty
   private[this] def read(len: Int): Future[Buf] =

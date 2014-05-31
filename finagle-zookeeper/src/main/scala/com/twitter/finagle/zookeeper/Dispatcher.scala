@@ -49,7 +49,6 @@ private[finagle] class ClientDispatcher(
 
   private[this] def actOnRead(watchManager: WatchManager)(buf: Buf): Future[Unit] = {
     val ReplyHeader(replyHeader, rem) = buf
-//println("<== " + replyHeader)
     replyHeader match {
       // ping
       case ReplyHeader(XID.Ping, _, _) =>
@@ -88,7 +87,6 @@ private[finagle] class ClientDispatcher(
         if (err != KeeperException.Ok) promise.setValue(ErrorResponse(zxid, err)) else {
           decoder(rem) match {
             case Some((packet, _)) =>
-//println("<=== " + packet)
               promise.setValue(PacketResponse(zxid, packet))
             case None => // TODO: invalid response
           }
@@ -106,7 +104,6 @@ private[finagle] class ClientDispatcher(
     trans.read() within(timeout) flatMap actOnRead(watchManager) before readLooper(timeout, watchManager)
 
   private[this] def cleanup(exp: Throwable): Unit = synchronized {
-//println("cleaning up: " + exp)
     var item = queue.poll()
     while (item != null) {
       val (_, _, p) = item
@@ -117,7 +114,6 @@ private[finagle] class ClientDispatcher(
   }
 
   def apply(req: ZkRequest): Future[ZkResponse] = {
-//println("==> " + req)
     req match {
     case StartDispatcher(watchManager, readOnly, connPacket) =>
       if (started.getAndSet(true)) Future.exception(new ConnectionAlreadyStarted) else {
