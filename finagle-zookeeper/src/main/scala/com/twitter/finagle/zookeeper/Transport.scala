@@ -17,8 +17,10 @@ case class Transport(
   def close(deadline: Time) = trans.close(deadline)
 
   def write(req: Buf): Future[Unit] = {
-    val bytes = new Array[Byte](buf.length)
-    req.write(bytes, 0)
+    val framedReq = BufInt(req.length).concat(req)
+println("buf =>: " + Buf.slowHexString(framedReq))
+    val bytes = new Array[Byte](framedReq.length)
+    framedReq.write(bytes, 0)
     trans.write(ChannelBuffers.wrappedBuffer(bytes))
   }
 
@@ -36,6 +38,8 @@ case class Transport(
     } else {
       val out = buf.slice(0, len)
       buf = buf.slice(len, buf.length)
+
+println("buf <=: " + Buf.slowHexString(out))
       Future.value(out)
     }
 }

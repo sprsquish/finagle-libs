@@ -18,6 +18,7 @@ sealed trait ZkRequest
 case class StartDispatcher(
   watchManager: WatchManager,
   timeout: Int,
+  readOnly: Boolean,
   connPacket: ConnectRequest
 ) extends ZkRequest
 
@@ -49,6 +50,7 @@ private[finagle] class ClientDispatcher(
 
   private[this] def actOnRead(watchManager: WatchManager)(buf: Buf): Future[Unit] = {
     val ReplyHeader(replyHeader, rem) = buf
+    println("<== " + replyHeader)
     replyHeader match {
       // ping
       case ReplyHeader(XID.Ping, _, _) =>
@@ -112,12 +114,16 @@ private[finagle] class ClientDispatcher(
     close()
   }
 
-  def apply(req: ZkRequest): Future[ZkResponse] = req match {
-    case StartDispatcher(watchManager, timeout, connPacket) =>
+  def apply(req: ZkRequest): Future[ZkResponse] = {
+    println("==> " + req)
+    req match {
+    case StartDispatcher(watchManager, timeout, readOnly, connPacket) =>
       if (started.getAndSet(true)) Future.exception(new ConnectionAlreadyStarted) else {
 
-        trans.write(connPacket.buf) flatMap { _ =>
-          trans.read() map { case ConnectResponse(rep, _) => PacketResponse(0, rep) }
+        trans.write(connPacket.buf.concat(BufBool(readOnly))) flatMap { _ =>
+          trans.read() map { case ConnectResponse(rep, _) =>
+println("con <=: " + rep)
+          PacketResponse(0, rep) }
         } onSuccess { _ =>
           readLooper(timeout.seconds, watchManager) onFailure cleanup
           sendPingLooper(10.seconds) // max time between pings
@@ -133,6 +139,7 @@ private[finagle] class ClientDispatcher(
         queue.add((xId, decoder, repPromise))
         trans.write(reqBuf) flatMap { _ => repPromise }
       }
+    }
   }
 
   override def close(deadline: Time): Future[Unit] = {

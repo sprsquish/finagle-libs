@@ -38,19 +38,19 @@ object ExistsResponse {
 class ZkClient(
   factory: ServiceFactory[ZkRequest, ZkResponse],
   watchManager: WatchManager = DefaultWatchManager,
-  timeout: Duration = 60.seconds,
-  isReadOnly: Boolean = false
+  timeout: Duration = 30.seconds,
+  readOnly: Boolean = false
 ) {
   @volatile private[this] var lastZxid: Long = 0L
   @volatile private[this] var sessionId: Long = 0L
   @volatile private[this] var sessionPasswd: Array[Byte] = new Array[Byte](16)
 
   // TODO: proper connection management
-  private[this] def connReq = ConnectRequest(0, lastZxid, timeout.inSeconds, sessionId, sessionPasswd)
-  private[this] val start = StartDispatcher(watchManager, timeout.inSeconds, connReq)
+  private[this] def connReq = ConnectRequest(0, lastZxid, timeout.inMilliseconds.toInt, sessionId, sessionPasswd)
+  private[this] val start = StartDispatcher(watchManager, timeout.inMilliseconds.toInt, readOnly, connReq)
   private[this] val svc: Future[Service[ZkRequest, ZkResponse]] = factory() flatMap { svc =>
     svc(start) flatMap {
-      case rep: ConnectResponse =>
+      case PacketResponse(_, rep: ConnectResponse) =>
         sessionId = rep.sessionId
         sessionPasswd = rep.passwd
         // TODO: set negotiated timeout

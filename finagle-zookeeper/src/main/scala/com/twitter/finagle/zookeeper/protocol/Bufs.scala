@@ -64,7 +64,7 @@ object BufString {
 
   def unapply(buf: Buf): Option[(String, Buf)] = {
     val BufInt(len, rem) = buf
-    val Buf.Utf8(str) = rem
+    val Buf.Utf8(str) = rem.slice(0, len)
     Some(str, rem.slice(len, rem.length))
   }
 }
@@ -78,20 +78,22 @@ object BufArray {
   def unapply(buf: Buf): Option[(Array[Byte], Buf)] = {
     val BufInt(len, rem) = buf
     val arr = new Array[Byte](len)
-    rem.write(arr, 0)
+    rem.slice(0, len).write(arr, 0)
     Some(arr, rem.slice(len, rem.length))
   }
 }
 
 object BufBool {
   def apply(b: Boolean): Buf = {
-    BufInt(if (b) 1 else 0)
+    Buf.ByteArray((if (b) 1 else 0).toByte)
   }
 
   def unapply(buf: Buf): Option[(Boolean, Buf)] = {
-    val BufInt(i, rem) = buf
-    // TODO: throw if i < 0
-    Some(i != 0, rem)
+    val bytes = new Array[Byte](1)
+    buf.slice(0, 1).write(bytes, 0)
+    val rem = buf.slice(1, buf.length)
+
+    if (bytes(0) < 0) None else Some(bytes(0) != 0, rem)
   }
 }
 
