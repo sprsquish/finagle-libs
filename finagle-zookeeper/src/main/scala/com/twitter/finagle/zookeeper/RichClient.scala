@@ -9,6 +9,7 @@ import com.twitter.finagle.zookeeper.protocol.{
   _}
 import com.twitter.io.Buf
 import com.twitter.util._
+import java.util.concurrent.atomic.AtomicBoolean
 
 sealed trait State
 object State {
@@ -21,8 +22,13 @@ object State {
   object NotConnected extends State
 }
 
-sealed trait CreateMode
-//TODO
+sealed abstract class CreateMode(val flag: Int, val ephemeral: Boolean, val sequential: Boolean)
+object CreateMode {
+  object Persistent extends CreateMode(0, false, false)
+  object PersistentSequential extends CreateMode(2, false, true)
+  object Ephemeral extends CreateMode(1, true, false)
+  object EphermalSequential extends CreateMode(3, true, true)
+}
 
 case class GetACLResponse(stat: Stat, acl: Seq[ACL])
 case class GetChildrenResponse(stat: Stat, children: Seq[String], watch: Option[Future[WatchedEvent]])
@@ -37,9 +43,9 @@ object ExistsResponse {
 
 class ZkClient(
   factory: ServiceFactory[ZkRequest, ZkResponse],
-  watchManager: WatchManager = DefaultWatchManager,
   timeout: Duration = 30.seconds,
-  readOnly: Boolean = false
+  readOnly: Boolean = false,
+  watchManager: WatchManager = new DefaultWatchManager
 ) {
   @volatile private[this] var lastZxid: Long = 0L
   @volatile private[this] var sessionId: Long = 0L
@@ -47,32 +53,60 @@ class ZkClient(
 
   // TODO: proper connection management
   private[this] def connReq = ConnectRequest(0, lastZxid, timeout.inMilliseconds.toInt, sessionId, sessionPasswd)
-  private[this] val start = StartDispatcher(watchManager, timeout.inMilliseconds.toInt, readOnly, connReq)
-  private[this] val svc: Future[Service[ZkRequest, ZkResponse]] = factory() flatMap { svc =>
-    svc(start) flatMap {
-      case PacketResponse(_, rep: ConnectResponse) =>
-        sessionId = rep.sessionId
-        sessionPasswd = rep.passwd
-        // TODO: set negotiated timeout
-        Future.value(svc)
-      case _ =>
-        Future.exception(new Exception("should have gotten a ConnectResponse"))
-    }
+  private[this] def start = StartDispatcher(watchManager, readOnly, connReq)
+
+  @volatile private[this] var dispatcher: Future[Service[ZkRequest, ZkResponse]] = newDispatcher flatMap { d =>
+    d.close() flatMap { _ => newDispatcher }
   }
 
-  private[this] def write[T <: Packet](req: ZkRequest): Future[T] = svc flatMap { svc =>
-    svc(req) flatMap {
-      case ErrorResponse(zxid, err) =>
-        lastZxid = zxid
-        Future.exception(err)
-      case PacketResponse(zxid, packet) =>
-        lastZxid = zxid
-        Future.value(packet.asInstanceOf[T])
+  private[this] def newDispatcher: Future[Service[ZkRequest, ZkResponse]] =
+    factory() flatMap { svc =>
+      svc(start) flatMap {
+        case PacketResponse(_, rep: ConnectResponse) =>
+          sessionId = rep.sessionId
+          sessionPasswd = rep.passwd
+          // TODO: set negotiated timeout
+          dispatcher = Future.value(svc)
+          dispatcher
+        case _ =>
+          Future.exception(new Exception("should have gotten a ConnectResponse"))
+      }
     }
+
+  private[this] val connected = new AtomicBoolean(true)
+  private[this] def reconnect(): Future[Service[ZkRequest, ZkResponse]] = {
+    dispatcher = newDispatcher
+    dispatcher onSuccess { _ => connected.set(true) }
+    dispatcher
   }
 
-  def create(path: String, data: Array[Byte], acl: Seq[ACL], createMode: CreateMode): Future[String] = {
-    val req = PacketRequest(OpCodes.Create, CreateRequest(path, data, acl, 0), CreateResponse.unapply)
+  private[this] def write[T <: Packet](req: ZkRequest): Future[T] =
+    dispatcher flatMap { svc =>
+      svc(req) flatMap {
+        case ErrorResponse(zxid, err) =>
+          lastZxid = zxid
+          Future.exception(err)
+        case PacketResponse(zxid, packet) =>
+          lastZxid = zxid
+          Future.value(packet.asInstanceOf[T])
+      }
+    } rescue {
+      case KeeperException.ConnectionLoss =>
+        if (connected.compareAndSet(true, false))
+          reconnect() flatMap { _ => write(req) }
+        else
+          write(req)
+    }
+
+  def create(
+    path: String,
+    data: Buf = Buf.Empty,
+    acl: Seq[ACL] = Ids.OpenAclUnsafe,
+    createMode: CreateMode = CreateMode.Persistent
+  ): Future[String] = {
+    val bytes = new Array[Byte](data.length)
+    data.write(bytes, 0)
+    val req = PacketRequest(OpCodes.Create, CreateRequest(path, bytes, acl, createMode.flag), CreateResponse.unapply)
     write[CreateResponse](req) map { _.path }
   }
 

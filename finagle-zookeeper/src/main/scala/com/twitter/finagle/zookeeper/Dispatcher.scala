@@ -17,7 +17,6 @@ class OutOfOrderException extends Exception
 sealed trait ZkRequest
 case class StartDispatcher(
   watchManager: WatchManager,
-  timeout: Int,
   readOnly: Boolean,
   connPacket: ConnectRequest
 ) extends ZkRequest
@@ -50,7 +49,7 @@ private[finagle] class ClientDispatcher(
 
   private[this] def actOnRead(watchManager: WatchManager)(buf: Buf): Future[Unit] = {
     val ReplyHeader(replyHeader, rem) = buf
-    println("<== " + replyHeader)
+//println("<== " + replyHeader)
     replyHeader match {
       // ping
       case ReplyHeader(XID.Ping, _, _) =>
@@ -88,7 +87,9 @@ private[finagle] class ClientDispatcher(
 
         if (err != KeeperException.Ok) promise.setValue(ErrorResponse(zxid, err)) else {
           decoder(rem) match {
-            case Some((packet, _)) => promise.setValue(PacketResponse(zxid, packet))
+            case Some((packet, _)) =>
+//println("<=== " + packet)
+              promise.setValue(PacketResponse(zxid, packet))
             case None => // TODO: invalid response
           }
         }
@@ -105,6 +106,7 @@ private[finagle] class ClientDispatcher(
     trans.read() within(timeout) flatMap actOnRead(watchManager) before readLooper(timeout, watchManager)
 
   private[this] def cleanup(exp: Throwable): Unit = synchronized {
+//println("cleaning up: " + exp)
     var item = queue.poll()
     while (item != null) {
       val (_, _, p) = item
@@ -115,18 +117,21 @@ private[finagle] class ClientDispatcher(
   }
 
   def apply(req: ZkRequest): Future[ZkResponse] = {
-    println("==> " + req)
+//println("==> " + req)
     req match {
-    case StartDispatcher(watchManager, timeout, readOnly, connPacket) =>
+    case StartDispatcher(watchManager, readOnly, connPacket) =>
       if (started.getAndSet(true)) Future.exception(new ConnectionAlreadyStarted) else {
 
         trans.write(connPacket.buf.concat(BufBool(readOnly))) flatMap { _ =>
-          trans.read() map { case ConnectResponse(rep, _) =>
-println("con <=: " + rep)
-          PacketResponse(0, rep) }
-        } onSuccess { _ =>
-          readLooper(timeout.seconds, watchManager) onFailure cleanup
-          sendPingLooper(10.seconds) // max time between pings
+          trans.read() map {
+            case ConnectResponse(rep, _) =>
+              readLooper(rep.timeOut.milliseconds, watchManager) onFailure {
+                case _: TimeoutException => cleanup(KeeperException.ConnectionLoss)
+                case t: Throwable => cleanup(t)
+              }
+              sendPingLooper(10.seconds) // max time between pings
+            PacketResponse(0, rep)
+          }
         }
       }
 

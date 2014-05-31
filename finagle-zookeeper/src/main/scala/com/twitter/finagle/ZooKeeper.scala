@@ -26,4 +26,7 @@ object ZooKeeperClient extends DefaultClient[ZkRequest, ZkResponse](
 object ZooKeeper extends Client[ZkRequest, ZkResponse] {
   def newClient(name: Name, label: String): ServiceFactory[ZkRequest, ZkResponse] =
     ZooKeeperClient.newClient(name, label)
+
+  def newRichClient(dest: String): ZkClient =
+    new ZkClient(newClient(dest))
 }

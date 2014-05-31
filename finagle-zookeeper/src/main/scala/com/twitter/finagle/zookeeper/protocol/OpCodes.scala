@@ -32,3 +32,20 @@ object OpCodes {
   val CloseSession = -11
   val Error = -1
 }
+
+object Perms {
+  val Read = 1 << 0
+  val Write = 1 << 1
+  val Create = 1 << 2
+  val Delete = 1 << 3
+  val Admin = 1 << 4
+  val All = Read | Write | Create | Delete | Admin
+}
+
+object Ids {
+  val AnyoneIdUnsafe = Id("world", "anyone")
+  val AuthIds = Id("auth", "")
+  val OpenAclUnsafe = Seq(ACL(Perms.All, AnyoneIdUnsafe))
+  val CreatorAllAcl = Seq(ACL(Perms.All, AuthIds))
+  val ReadAclUnsafe = Seq(ACL(Perms.Read, AnyoneIdUnsafe))
+}

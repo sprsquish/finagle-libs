@@ -15,7 +15,7 @@ trait WatchManager {
   def childrenWatch(path: String): Future[WatchedEvent]
 }
 
-object DefaultWatchManager extends WatchManager {
+class DefaultWatchManager extends WatchManager {
   private[this] val dataTable = new mutable.HashMap[String, Promise[WatchedEvent]]
   private[this] val existTable = new mutable.HashMap[String, Promise[WatchedEvent]]
   private[this] val childTable = new mutable.HashMap[String, Promise[WatchedEvent]]
