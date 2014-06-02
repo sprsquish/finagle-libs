@@ -103,18 +103,18 @@ class ZkClient(
     data: Buf = Buf.Empty,
     acl: Seq[ACL] = Ids.OpenAclUnsafe,
     createMode: CreateMode = CreateMode.Persistent
-  ): Future[String] = {
+  ): Future[String] = validatePath(path) flatMap { _ =>
     val bytes = new Array[Byte](data.length)
     data.write(bytes, 0)
     val req = PacketRequest(OpCodes.Create, CreateRequest(path, bytes, acl, createMode.flag), CreateResponse.unapply)
     write[CreateResponse](req) map { _.path }
   }
 
-  def delete(path: String, version: Int): Future[Unit] = {
+  def delete(path: String, version: Int): Future[Unit] = validatePath(path) flatMap { _ =>
     write[DeleteResponse](PacketRequest(OpCodes.Delete, DeleteRequest(path, version), DeleteResponse.unapply)).unit
   }
 
-  def exists(path: String, watch: Boolean = false): Future[ExistsResponse] = {
+  def exists(path: String, watch: Boolean = false): Future[ExistsResponse] = validatePath(path) flatMap { _ =>
     val watchFuture = if (watch) Some(watchManager.existsWatch(path)) else None
 
     val req = PacketRequest(OpCodes.Exists, ExistsRequest(path, watch), ExistsResponsePacket.unapply)
@@ -124,31 +124,31 @@ class ZkClient(
     }
   }
 
-  def getACL(path: String): Future[GetACLResponse] = {
+  def getACL(path: String): Future[GetACLResponse] = validatePath(path) flatMap { _ =>
     val req = PacketRequest(OpCodes.GetACL, GetACLRequest(path), GetACLResponsePacket.unapply)
     write[GetACLResponsePacket](req) map { rep => GetACLResponse(rep.stat, rep.acl) }
   }
 
-  def getChildren(path: String, watch: Boolean = false): Future[GetChildrenResponse] = {
+  def getChildren(path: String, watch: Boolean = false): Future[GetChildrenResponse] = validatePath(path) flatMap { _ =>
     val watchFuture = if (watch) Some(watchManager.childrenWatch(path)) else None
 
     val req = PacketRequest(OpCodes.GetChildren, GetChildren2Request(path, watch), GetChildren2Response.unapply)
     write[GetChildren2Response](req) map { rep => GetChildrenResponse(rep.stat, rep.children, watchFuture) }
   }
 
-  def getData(path: String, watch: Boolean = false): Future[GetDataResponse] = {
+  def getData(path: String, watch: Boolean = false): Future[GetDataResponse] = validatePath(path) flatMap { _ =>
     val watchFuture = if (watch) Some(watchManager.dataWatch(path)) else None
 
     val req = PacketRequest(OpCodes.GetData, GetDataRequest(path, watch), GetDataResponsePacket.unapply)
-    write[GetDataResponsePacket](req) map { rep => GetDataResponse(rep.stat, BufArray(rep.data), watchFuture) }
+    write[GetDataResponsePacket](req) map { rep => GetDataResponse(rep.stat, Buf.ByteArray(rep.data), watchFuture) }
   }
 
-  def setACL(path: String, acl: Seq[ACL], version: Int): Future[Stat] = {
+  def setACL(path: String, acl: Seq[ACL], version: Int): Future[Stat] = validatePath(path) flatMap { _ =>
     val req = PacketRequest(OpCodes.SetACL, SetACLRequest(path, acl, version), SetACLResponse.unapply)
     write[SetACLResponse](req) map { _.stat }
   }
 
-  def setData(path: String, data: Buf, version: Int): Future[Stat] = {
+  def setData(path: String, data: Buf, version: Int): Future[Stat] = validatePath(path) flatMap { _ =>
     val bytes = new Array[Byte](data.length)
     data.write(bytes, 0)
     val req = PacketRequest(OpCodes.SetData, SetDataRequest(path, bytes, version), SetDataResponse.unapply)
@@ -156,4 +156,40 @@ class ZkClient(
   }
 
   //def multi(ops: Seq[Op]): Future[Seq[OpResult]]
+
+  private[zookeeper] def validatePath(path: String): Future[Unit] = {
+    if (path == null)
+      return Future.exception(new IllegalArgumentException("Path cannot be null"))
+
+    if (path.length() == 0)
+      return Future.exception(new IllegalArgumentException("Path length must be > 0"))
+
+    if (path.charAt(0) != '/')
+      return Future.exception(new IllegalArgumentException("Path must start with / character"))
+
+    if (path.length == 1)
+      return Future.Done
+
+    if (path.charAt(path.length() - 1) == '/')
+      return Future.exception(new IllegalArgumentException("Path must not end with / character"))
+
+    def err(reason: String): Future[Unit] =
+      Future.exception(new IllegalArgumentException("Invalid path string \"" + path + "\" caused by " + reason))
+
+    path.split("/").drop(1) foreach {
+      case "" => return err("empty node name specified")
+      case ".." | "." => return err("relative paths not allowed")
+      case s => s foreach { c =>
+        if (c == 0) return err("null character not allowed")
+
+        if (c > '\u0000' && c <= '\u001f'
+          || c >= '\u007f' && c <= '\u009F'
+          || c >= '\ud800' && c <= '\uf8ff'
+          || c >= '\ufff0' && c <= '\uffff'
+        ) return err("invalid character")
+      }
+    }
+
+    Future.Done
+  }
 }
