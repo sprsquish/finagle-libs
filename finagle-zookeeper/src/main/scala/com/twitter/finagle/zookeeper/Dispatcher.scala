@@ -15,6 +15,8 @@ class EmptyRequestQueueException(xid: Int) extends Exception
 class OutOfOrderException extends Exception
 
 sealed trait ZkRequest
+// XXX: hack type to get a close request through to the dispatcher
+case class CloseConn(deadline: Time) extends ZkRequest
 case class StartDispatcher(
   watchManager: WatchManager,
   readOnly: Boolean,
@@ -28,6 +30,8 @@ case class PacketRequest(
 ) extends ZkRequest
 
 sealed trait ZkResponse { val zxid: Long }
+// XXX: hack type to get a close request through to the dispatcher
+object ClosedConn extends ZkResponse { val zxid = 0L }
 case class PacketResponse(
   zxid: Long,
   packet: Packet
@@ -113,11 +117,12 @@ private[finagle] class ClientDispatcher(
     close()
   }
 
-  def apply(req: ZkRequest): Future[ZkResponse] = {
-    req match {
+  def apply(req: ZkRequest): Future[ZkResponse] = req match {
+    // XXX: HACK! Why doesn't close propogate from the client?
+    case CloseConn(deadline) => close(deadline) map { _ => ClosedConn }
+
     case StartDispatcher(watchManager, readOnly, connPacket) =>
       if (started.getAndSet(true)) Future.exception(new ConnectionAlreadyStarted) else {
-
         trans.write(connPacket.buf.concat(BufBool(readOnly))) flatMap { _ =>
           trans.read() map {
             case ConnectResponse(rep, _) =>
@@ -126,6 +131,7 @@ private[finagle] class ClientDispatcher(
                 case t: Throwable => cleanup(t)
               }
               sendPingLooper(10.seconds) // max time between pings
+
             PacketResponse(0, rep)
           }
         }
@@ -140,10 +146,9 @@ private[finagle] class ClientDispatcher(
         queue.add((xId, decoder, repPromise))
         trans.write(reqBuf) flatMap { _ => repPromise }
       }
-    }
   }
 
   override def close(deadline: Time): Future[Unit] = {
-    trans.close(deadline)
+    trans.close(deadline) //onSuccess { _ => started.set(false) }
   }
 }
