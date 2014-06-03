@@ -14,6 +14,17 @@ class ConnectionAlreadyStarted extends Exception
 class EmptyRequestQueueException(xid: Int) extends Exception
 class OutOfOrderException extends Exception
 
+sealed trait ConnectionState
+object ConnectionState {
+  object Connecting extends ConnectionState
+  object Associating extends ConnectionState
+  object Connected extends ConnectionState
+  object ConnectedReadOnly extends ConnectionState
+  object Closed extends ConnectionState
+  object AuthFailed extends ConnectionState
+  object NotConnected extends ConnectionState
+}
+
 sealed trait ZkRequest
 // XXX: hack type to get a close request through to the dispatcher
 case class CloseConn(deadline: Time) extends ZkRequest

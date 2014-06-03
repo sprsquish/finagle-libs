@@ -11,17 +11,6 @@ import com.twitter.io.Buf
 import com.twitter.util._
 import java.util.concurrent.atomic.AtomicBoolean
 
-sealed trait State
-object State {
-  object Connecting extends State
-  object Associating extends State
-  object Connected extends State
-  object ConnectedReadOnly extends State
-  object Closed extends State
-  object AuthFailed extends State
-  object NotConnected extends State
-}
-
 sealed abstract class CreateMode(val flag: Int, val ephemeral: Boolean, val sequential: Boolean)
 object CreateMode {
   object Persistent extends CreateMode(0, false, false)
@@ -39,7 +28,6 @@ object ExistsResponse {
   case class NodeStat(stat: Stat, watch: Option[Future[WatchedEvent]]) extends ExistsResponse
   case class NoNode(watch: Option[Future[WatchedEvent]]) extends ExistsResponse
 }
-
 
 class ZkClient(
   factory: ServiceFactory[ZkRequest, ZkResponse],
