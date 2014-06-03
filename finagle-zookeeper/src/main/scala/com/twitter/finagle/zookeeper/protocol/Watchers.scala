@@ -3,6 +3,18 @@ package com.twitter.finagle.zookeeper.protocol
 import com.twitter.util.{Future, Promise}
 import scala.collection.mutable
 
+sealed abstract class WatchType(val value: Int)
+object WatchType {
+  object Children extends WatchType(1)
+  object Data extends WatchType(2)
+  object Any extends WatchType(3)
+}
+
+trait Watch extends Future[WatchedEvent] {
+  def remove(): Future[Unit]
+}
+trait PendingWatch extends Promise[WatchedEvent] with Watch
+
 trait WatchManager {
   def apply(evt: WatcherEvent): Future[Unit] =
     apply(WatchedEvent(evt))
@@ -14,10 +26,12 @@ trait WatchManager {
   def childrenWatch(path: String): Future[WatchedEvent]
 }
 
-class DefaultWatchManager extends WatchManager {
-  private[this] val dataTable = new mutable.HashMap[String, Promise[WatchedEvent]]
-  private[this] val existTable = new mutable.HashMap[String, Promise[WatchedEvent]]
-  private[this] val childTable = new mutable.HashMap[String, Promise[WatchedEvent]]
+class DefaultWatchManager(
+  sendRemoveWatch: (WatchType, String) => Future[Unit]
+) extends WatchManager {
+  private[this] val dataTable = new mutable.HashMap[String, PendingWatch]
+  private[this] val existTable = new mutable.HashMap[String, PendingWatch]
+  private[this] val childTable = new mutable.HashMap[String, PendingWatch]
 
   // TODO: should this be shunted off to another threadpool?
   // for now the read thread will end up satisfying all watches
@@ -47,7 +61,7 @@ class DefaultWatchManager extends WatchManager {
         ).flatten
 
       case _ =>
-        Seq.empty[Promise[WatchedEvent]]
+        Seq.empty[PendingWatch]
     }
 
     watches foreach { _.setValue(evt) }
@@ -56,9 +70,9 @@ class DefaultWatchManager extends WatchManager {
   }
 
   private[this] def watchesFor(
-    table: mutable.Map[String, Promise[WatchedEvent]],
+    table: mutable.Map[String, PendingWatch],
     path: Option[String]
-  ): Seq[Promise[WatchedEvent]] =
+  ): Seq[PendingWatch] =
     table.synchronized {
       path match {
         case Some(p) => table.remove(p).toSeq
@@ -69,14 +83,44 @@ class DefaultWatchManager extends WatchManager {
       }
     }
 
+  private[this] def removeWatch(
+    table: mutable.Map[String, Set[PendingWatch]],
+    path: String,
+    watch: PendingWatch
+  ): Future[Unit] = table.synchronized {
+    table.remove(path) map { set =>
+      val newSet = set - watch
+      if (!newSet.isEmpty) {
+        table(path) = newSet
+        Future.Done
+      } else {
+        sendRemoveWatch(typ, path)
+      }
+    } getOrElse(Future.Done)
+  }
+
+  private[this] def addWatch(
+    table: mutable.Map[String, Set[PendingWatch]],
+    path: String
+  ): Watch = table.synchronized {
+    val watch = new PendingWatch { self =>
+      def remove(): Future[Unit] = removeWatch(table, path, self)
+    }
+    watch.setInterruptHandler { case _: Throwable => watch.remove() }
+
+    val set = table.getOrElse(path, Set.empty[PendingWatch])
+    table(path) = set + watch
+    watch
+  }
+
   def existsWatch(path: String): Future[WatchedEvent] =
-    existTable.synchronized { existTable.getOrElseUpdate(path, new Promise[WatchedEvent]) }
+    existTable.synchronized { existTable.getOrElseUpdate(path, new PendingWatch) }
 
   def dataWatch(path: String): Future[WatchedEvent] =
-    dataTable.synchronized { dataTable.getOrElseUpdate(path, new Promise[WatchedEvent]) }
+    dataTable.synchronized { dataTable.getOrElseUpdate(path, new PendingWatch) }
 
   def childrenWatch(path: String): Future[WatchedEvent] =
-    childTable.synchronized { childTable.getOrElseUpdate(path, new Promise[WatchedEvent]) }
+    childTable.synchronized { childTable.getOrElseUpdate(path, new PendingWatch) }
 }
 
 case class WatchedEvent(typ: EventType, state: KeeperState, path: Option[String] = None)
