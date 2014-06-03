@@ -10,6 +10,7 @@ import com.twitter.util._
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 import java.util.concurrent.LinkedBlockingQueue
 
+class ConnectionNotStarted extends Exception
 class ConnectionAlreadyStarted extends Exception
 class EmptyRequestQueueException(xid: Int) extends Exception
 class OutOfOrderException extends Exception
@@ -43,71 +44,61 @@ case class PacketRequest(
 sealed trait ZkResponse { val zxid: Long }
 // XXX: hack type to get a close request through to the dispatcher
 object ClosedConn extends ZkResponse { val zxid = 0L }
-case class PacketResponse(
-  zxid: Long,
-  packet: Packet
-) extends ZkResponse
-
-case class ErrorResponse(
-  zxid: Long,
-  err: KeeperException
-) extends ZkResponse
+case class PacketResponse(zxid: Long, packet: Packet) extends ZkResponse
+case class ErrorResponse(zxid: Long, err: KeeperException) extends ZkResponse
 
 private[finagle] class ClientDispatcher(
   trans: FTransport[Buf, Buf],
   ttimer: Timer = DefaultTimer.twitter
 ) extends Service[ZkRequest, ZkResponse] {
   implicit private[this] val timer = ttimer
+
   private[this] val curXid = new AtomicInteger(0)
   private[this] val started = new AtomicBoolean(false)
   private[this] val queue = new LinkedBlockingQueue[(Int, Buf => Option[(Packet, Buf)], Promise[ZkResponse])]()
 
-  private[this] def actOnRead(watchManager: WatchManager)(buf: Buf): Future[Unit] = {
-    val ReplyHeader(replyHeader, rem) = buf
-    replyHeader match {
-      // ping
-      case ReplyHeader(XID.Ping, _, _) =>
-        // TODO: debug logging?
-        Future.Done
+  private[this] def actOnRead(watchManager: WatchManager): Buf => Future[Unit] = {
+    // ping
+    case ReplyHeader(ReplyHeader(XID.Ping, _, _), _) =>
+      // TODO: debug logging?
+      Future.Done
 
-      // auth packet
-      case ReplyHeader(XID.Auth, _, err) =>
-        if (err != KeeperException.AuthFailed) Future.Done else {
-          // TODO: state = State.AuthFailed
-          watchManager(WatchedEvent(EventType.None, KeeperState.AuthFailed))
+    // auth packet
+    case ReplyHeader(ReplyHeader(XID.Auth, _, err), _) =>
+      if (err != KeeperException.AuthFailed) Future.Done else {
+        // TODO: state = State.AuthFailed
+        watchManager(WatchedEvent(EventType.None, KeeperState.AuthFailed))
+      }
+
+    // notification
+    case ReplyHeader(ReplyHeader(XID.Notification, _, _), WatcherEvent(evt, _)) =>
+      watchManager(evt)
+
+    // TODO: implement sasl auth
+    // sasl auth in progress
+    //case _ if saslAuth =>
+      //val GetSASLRequest(saslReq, _) = rem
+      //Future.Done
+
+    case ReplyHeader(ReplyHeader(xid, zxid, KeeperException(err)), rem) =>
+      val req = queue.synchronized { queue.poll() }
+
+      // we don't have any requests to service. this is an unrecoverable exception
+      if (req == null) throw new EmptyRequestQueueException(xid)
+
+      val (reqXid, decoder, promise) = req
+
+      // server and client are somehow out of sync. we can't recover
+      if (reqXid != xid) throw new OutOfOrderException
+
+      if (err != KeeperException.Ok) promise.setValue(ErrorResponse(zxid, err)) else {
+        decoder(rem) match {
+          case Some((packet, _)) =>
+            promise.setValue(PacketResponse(zxid, packet))
+          case None => // TODO: invalid response
         }
-
-      // notification
-      case ReplyHeader(XID.Notification, _, _) =>
-        val WatcherEvent(evt, _) = rem
-        watchManager(evt)
-
-      // TODO: implement sasl auth
-      // sasl auth in progress
-      //case _ if saslAuth =>
-        //val GetSASLRequest(saslReq, _) = rem
-        //Future.Done
-
-      case ReplyHeader(xid, zxid, KeeperException(err)) =>
-        val req = synchronized { queue.poll() }
-
-        // we don't have any requests to service. this is an unrecoverable exception
-        if (req == null) throw new EmptyRequestQueueException(xid)
-
-        val (reqXid, decoder, promise) = req
-
-        // server and client are somehow out of sync. we can't recover
-        if (reqXid != xid) throw new OutOfOrderException//(request, replyHeader)
-
-        if (err != KeeperException.Ok) promise.setValue(ErrorResponse(zxid, err)) else {
-          decoder(rem) match {
-            case Some((packet, _)) =>
-              promise.setValue(PacketResponse(zxid, packet))
-            case None => // TODO: invalid response
-          }
-        }
-        Future.Done
-    }
+      }
+      Future.Done
   }
 
   // TODO: calculate how often?
@@ -118,37 +109,42 @@ private[finagle] class ClientDispatcher(
   private[this] def readLooper(timeout: Duration, watchManager: WatchManager): Future[Unit] =
     trans.read() within(timeout) flatMap actOnRead(watchManager) before readLooper(timeout, watchManager)
 
-  private[this] def cleanup(exp: Throwable): Unit = synchronized {
-    var item = queue.poll()
-    while (item != null) {
-      val (_, _, p) = item
-      p.setException(exp)
-      item = queue.poll()
+  private[this] def cleanup(exp: Throwable): Unit = close() ensure {
+    queue.synchronized {
+      var item = queue.poll()
+      while (item != null) {
+        val (_, _, p) = item
+        p.setException(exp)
+        item = queue.poll()
+      }
     }
-    close()
+  }
+
+  private[this] def start(req: StartDispatcher): Future[ConnectResponse] = {
+    val StartDispatcher(watchManager, readOnly, connPacket) = req
+    trans.write(connPacket.buf.concat(BufBool(readOnly))) flatMap { _ =>
+      trans.read() map { case ConnectResponse(rep, _) =>
+        readLooper(rep.timeOut.milliseconds, watchManager) onFailure {
+          case _: TimeoutException => cleanup(KeeperException.ConnectionLoss)
+          case t: Throwable => cleanup(t)
+        }
+        sendPingLooper(10.seconds) // max time between pings
+        rep
+      }
+    }
   }
 
   def apply(req: ZkRequest): Future[ZkResponse] = req match {
     // XXX: HACK! Why doesn't close propogate from the client?
     case CloseConn(deadline) => close(deadline) map { _ => ClosedConn }
 
-    case StartDispatcher(watchManager, readOnly, connPacket) =>
-      if (started.getAndSet(true)) Future.exception(new ConnectionAlreadyStarted) else {
-        trans.write(connPacket.buf.concat(BufBool(readOnly))) flatMap { _ =>
-          trans.read() map {
-            case ConnectResponse(rep, _) =>
-              readLooper(rep.timeOut.milliseconds, watchManager) onFailure {
-                case _: TimeoutException => cleanup(KeeperException.ConnectionLoss)
-                case t: Throwable => cleanup(t)
-              }
-              sendPingLooper(10.seconds) // max time between pings
+    case sd@StartDispatcher(watchManager, readOnly, connPacket) =>
+      if (started.getAndSet(true))
+        Future.exception(new ConnectionAlreadyStarted)
+      else
+        start(sd) map { rep => PacketResponse(0, rep) }
 
-            PacketResponse(0, rep)
-          }
-        }
-      }
-
-    case PacketRequest(opCode, packet, decoder) =>
+    case PacketRequest(opCode, packet, decoder) if started.get() =>
       val repPromise = new Promise[ZkResponse]
       val xId = curXid.incrementAndGet()
       val reqBuf = RequestHeader(xId, opCode).buf.concat(packet.buf)
@@ -157,9 +153,12 @@ private[finagle] class ClientDispatcher(
         queue.add((xId, decoder, repPromise))
         trans.write(reqBuf) flatMap { _ => repPromise }
       }
+
+    case _ if !started.get() =>
+      Future.exception(new ConnectionNotStarted)
   }
 
   override def close(deadline: Time): Future[Unit] = {
-    trans.close(deadline) //onSuccess { _ => started.set(false) }
+    trans.close(deadline) onSuccess { _ => started.set(false) }
   }
 }

@@ -1,5 +1,7 @@
 package com.twitter.finagle.zookeeper.protocol
 
+import com.twitter.finagle.NoStacktrace
+
 sealed abstract class KeeperException(val code: Int) extends Exception with NoStacktrace
 object KeeperException {
   object Ok extends KeeperException(0)

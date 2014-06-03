@@ -1,6 +1,5 @@
 package com.twitter.finagle.zookeeper.protocol
 
-import com.twitter.finagle.NoStacktrace
 import com.twitter.util.{Future, Promise}
 import scala.collection.mutable
 
