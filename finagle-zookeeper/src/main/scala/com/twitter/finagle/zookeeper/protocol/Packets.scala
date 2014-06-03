@@ -6,14 +6,6 @@ sealed trait Packet {
   def buf: Buf
 }
 
-// Special Case Packets
-
-trait EmptyPacket extends Packet { def buf: Buf = Buf.Empty }
-object EmptyPacket extends EmptyPacket
-
-
-// Protocol Packets
-
 case class Id(scheme: String, id: String) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(scheme))
