@@ -11,14 +11,6 @@ import com.twitter.io.Buf
 import com.twitter.util._
 import java.util.concurrent.atomic.AtomicBoolean
 
-sealed abstract class CreateMode(val flag: Int, val ephemeral: Boolean, val sequential: Boolean)
-object CreateMode {
-  object Persistent extends CreateMode(0, false, false)
-  object PersistentSequential extends CreateMode(2, false, true)
-  object Ephemeral extends CreateMode(1, true, false)
-  object EphermalSequential extends CreateMode(3, true, true)
-}
-
 case class GetACLResponse(stat: Stat, acl: Seq[ACL])
 case class GetChildrenResponse(stat: Stat, children: Seq[String], watch: Option[Future[WatchedEvent]])
 case class GetDataResponse(stat: Stat, data: Buf, watch: Option[Future[WatchedEvent]])
@@ -348,5 +340,28 @@ class ZkClient(
     write(RemoveWatchesRequest(path, typ.value)).unit
   }
 
-  //def multi(ops: Seq[Op]): Future[Seq[OpResult]]
+  // TODO: re-work the docs (maybe the exception, too)
+  // TODO: support chroot
+  /**
+   * Executes multiple ZooKeeper operations or none of them.
+   * <p>
+   * On success, a list of results is returned.
+   * On failure, an exception is raised which contains partial results and
+   * error details, see {@link KeeperException#getResults}
+   * <p>
+   * Note: The maximum allowable size of all of the data arrays in all of
+   * the setData operations in this single request is typically 1 MB
+   * (1,048,576 bytes). This limit is specified on the server via
+   * <a href="http://zookeeper.apache.org/doc/current/zookeeperAdmin.html#Unsafe+Options">jute.maxbuffer</a>.
+   * Requests larger than this will cause a KeeperException to be
+   * thrown.
+   *
+   * @param ops An iterable that contains the operations to be done.
+   * These should be created using the factory methods on {@link Op}.
+   * @return A list of results, one for each input Op, the order of
+   * which exactly matches the order of the <code>ops</code> input
+   * operations.
+   */
+  def multi(ops: Seq[Multi.Op]): Future[Seq[Multi.OpResult]] =
+    write(MultiRequest(ops)) map { _.results }
 }

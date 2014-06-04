@@ -217,6 +217,27 @@ object RequestHeader {
   }
 }
 
+case class MultiRequest(
+  ops: Seq[Multi.Op]
+) extends RequestPacket[MultiResponse] {
+  val opCode = OpCodes.Multi
+  val decodeResponse = MultiResponse.unapply(_: Buf)
+  def buf: Buf = Multi.encode(ops)
+}
+
+case class MultiResponse(
+  results: Seq[Multi.OpResult]
+) extends Packet {
+  def buf: Buf = Buf.Empty
+}
+
+object MultiResponse {
+  def unapply(buf: Buf): Option[(MultiResponse, Buf)] = {
+    val (res, rem) = Multi.decode(buf)
+    Some(MultiResponse(res), rem)
+  }
+}
+
 case class MultiHeader(
   typ: Int,
   done: Boolean,
@@ -392,9 +413,9 @@ case class CreateRequest(
   data: Array[Byte],
   acl: Seq[ACL],
   flags: Int
-) extends RequestPacket[CreateResponse] {
-  val opCode = OpCodes.Create
-  val decodeResponse = CreateResponse.unapply(_: Buf)
+) extends RequestPacket[Create2Response] {
+  val opCode = OpCodes.Create2
+  val decodeResponse = Create2Response.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufArray(data))
@@ -653,15 +674,18 @@ object CreateResponse {
 }
 
 case class Create2Response(
-  path: String
+  path: String,
+  stat: Stat
 ) extends Packet {
-  def buf: Buf = BufString(path)
+  def buf: Buf = Buf.Empty
+    .concat(BufString(path))
+    .concat(stat.buf)
 }
 
 object Create2Response {
   def unapply(buf: Buf): Option[(Create2Response, Buf)] = {
-    val BufString(path, rem) = buf
-    Some(Create2Response(path), rem)
+    val BufString(path, Stat(stat, rem)) = buf
+    Some(Create2Response(path, stat), rem)
   }
 }
 
@@ -943,16 +967,16 @@ object CreatTxn {
   }
 }
 
-case class DeleteTxt(
+case class DeleteTxn(
   path: String
 ) extends Packet {
   def buf: Buf = BufString(path)
 }
 
-object DeleteTxt {
-  def unapply(buf: Buf): Option[(DeleteTxt, Buf)] = {
+object DeleteTxn {
+  def unapply(buf: Buf): Option[(DeleteTxn, Buf)] = {
     val BufString(path, rem) = buf
-    Some(DeleteTxt(path), rem)
+    Some(DeleteTxn(path), rem)
   }
 }
 

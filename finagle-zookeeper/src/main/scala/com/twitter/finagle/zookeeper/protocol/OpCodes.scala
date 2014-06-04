@@ -49,3 +49,12 @@ object Ids {
   val CreatorAllAcl = Seq(ACL(Perms.All, AuthIds))
   val ReadAclUnsafe = Seq(ACL(Perms.Read, AnyoneIdUnsafe))
 }
+
+sealed abstract class CreateMode(val flag: Int, val ephemeral: Boolean, val sequential: Boolean)
+object CreateMode {
+  object Persistent extends CreateMode(0, false, false)
+  object PersistentSequential extends CreateMode(2, false, true)
+  object Ephemeral extends CreateMode(1, true, false)
+  object EphermalSequential extends CreateMode(3, true, true)
+}
+
