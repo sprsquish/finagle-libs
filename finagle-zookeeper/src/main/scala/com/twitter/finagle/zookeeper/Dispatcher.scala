@@ -35,10 +35,8 @@ case class StartDispatcher(
   connPacket: ConnectRequest
 ) extends ZkRequest
 
-case class PacketRequest(
-  opCode: Int,
-  packet: Packet,
-  decoder: Buf => Option[(Packet, Buf)]
+case class PacketRequest[Response <: Packet](
+  packet: RequestPacket[Response]
 ) extends ZkRequest
 
 sealed trait ZkResponse { val zxid: Long }
@@ -144,13 +142,13 @@ private[finagle] class ClientDispatcher(
       else
         start(sd) map { rep => PacketResponse(0, rep) }
 
-    case PacketRequest(opCode, packet, decoder) if started.get() =>
+    case PacketRequest(packet) if started.get() =>
       val repPromise = new Promise[ZkResponse]
       val xId = curXid.incrementAndGet()
-      val reqBuf = RequestHeader(xId, opCode).buf.concat(packet.buf)
+      val reqBuf = RequestHeader(xId, packet.opCode).buf.concat(packet.buf)
       // sync to ensure packets go into the queue and transport at the same time
       synchronized {
-        queue.add((xId, decoder, repPromise))
+        queue.add((xId, packet.decodeResponse, repPromise))
         trans.write(reqBuf) flatMap { _ => repPromise }
       }
 

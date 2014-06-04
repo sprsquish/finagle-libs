@@ -6,6 +6,11 @@ sealed trait Packet {
   def buf: Buf
 }
 
+sealed trait RequestPacket[Response <: Packet] extends Packet {
+  val opCode: Int
+  val decodeResponse: Buf => Option[(Response, Buf)]
+}
+
 case class Id(scheme: String, id: String) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(scheme))
@@ -269,7 +274,9 @@ object ReplyHeader {
 case class GetDataRequest(
   path: String,
   watch: Boolean
-) extends Packet {
+) extends RequestPacket[GetDataResponse] {
+  val opCode = OpCodes.GetData
+  val decodeResponse = GetDataResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufBool(watch))
@@ -286,7 +293,9 @@ case class SetDataRequest(
   path: String,
   data: Array[Byte],
   version: Int
-) extends Packet {
+) extends RequestPacket[SetDataResponse] {
+  val opCode = OpCodes.SetData
+  val decodeResponse = SetDataResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufArray(data))
@@ -383,7 +392,9 @@ case class CreateRequest(
   data: Array[Byte],
   acl: Seq[ACL],
   flags: Int
-) extends Packet {
+) extends RequestPacket[CreateResponse] {
+  val opCode = OpCodes.Create
+  val decodeResponse = CreateResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufArray(data))
@@ -406,7 +417,9 @@ object CreateRequest {
 case class DeleteRequest(
   path: String,
   version: Int
-) extends Packet {
+) extends RequestPacket[DeleteResponse] {
+  val opCode = OpCodes.Delete
+  val decodeResponse = DeleteResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufInt(version))
@@ -448,7 +461,9 @@ object GetChildrenRequest {
 case class GetChildren2Request(
   path: String,
   watch: Boolean
-) extends Packet {
+) extends RequestPacket[GetChildren2Response] {
+  val opCode = OpCodes.GetChildren2
+  val decodeResponse = GetChildren2Response.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufBool(watch))
@@ -547,7 +562,9 @@ object SyncResponse {
 
 case class GetACLRequest(
   path: String
-) extends Packet {
+) extends RequestPacket[GetACLResponse] {
+  val opCode = OpCodes.GetACL
+  val decodeResponse = GetACLResponse.unapply(_: Buf)
   def buf: Buf = BufString(path)
 }
 
@@ -562,7 +579,9 @@ case class SetACLRequest(
   path: String,
   acl: Seq[ACL],
   version: Int
-) extends Packet {
+) extends RequestPacket[SetACLResponse] {
+  val opCode = OpCodes.SetACL
+  val decodeResponse = SetACLResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufSeqACL(acl))
@@ -649,7 +668,9 @@ object Create2Response {
 case class ExistsRequest(
   path: String,
   watch: Boolean
-) extends Packet {
+) extends RequestPacket[ExistsResponse] {
+  val opCode = OpCodes.Exists
+  val decodeResponse = ExistsResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufBool(watch))
@@ -739,7 +760,9 @@ object GetACLResponse {
 case class CheckWatchesRequest(
   path: String,
   typ: Int
-) extends Packet {
+) extends RequestPacket[CheckWatchesResponse] {
+  val opCode = OpCodes.CheckWatches
+  val decodeResponse = CheckWatchesResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufInt(typ))
@@ -765,7 +788,9 @@ object CheckWatchesResponse {
 case class RemoveWatchesRequest(
   path: String,
   typ: Int
-) extends Packet {
+) extends RequestPacket[RemoveWatchesResponse] {
+  val opCode = OpCodes.RemoveWatches
+  val decodeResponse = RemoveWatchesResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufInt(typ))

@@ -71,9 +71,9 @@ class ZkClient(
     dispatcher
   }
 
-  private[this] def write[T <: Packet](req: ZkRequest): Future[T] =
+  private[this] def write[T <: Packet](req: RequestPacket[T]): Future[T] =
     dispatcher flatMap { svc =>
-      svc(req) flatMap {
+      svc(PacketRequest(req)) flatMap {
         // XXX: shouldn't need this
         case ClosedConn => throw new Exception("should not have hit this")
         case ErrorResponse(zxid, err) =>
@@ -91,10 +91,8 @@ class ZkClient(
           write(req)
     }
 
-  private[this] def checkWatch(typ: WatchType, path: String): Future[Unit] = {
-    val req = PacketRequest(OpCodes.CheckWatches, CheckWatchesRequest(path, typ.value), CheckWatchesResponse.unapply)
-    write[CheckWatchesResponse](req).unit
-  }
+  private[this] def checkWatch(typ: WatchType, path: String): Future[Unit] =
+    write(CheckWatchesRequest(path, typ.value)).unit
 
   private[zookeeper] def validatePath(path: String): Future[Unit] = {
     if (path == null)
@@ -184,8 +182,7 @@ class ZkClient(
   ): Future[String] = validatePath(path) flatMap { _ =>
     val bytes = new Array[Byte](data.length)
     data.write(bytes, 0)
-    val req = PacketRequest(OpCodes.Create, CreateRequest(path, bytes, acl, createMode.flag), CreateResponse.unapply)
-    write[CreateResponse](req) map { _.path }
+    write(CreateRequest(path, bytes, acl, createMode.flag)) map { _.path }
   }
 
   /**
@@ -208,7 +205,7 @@ class ZkClient(
    * @param version the expected node version.
    */
   def delete(path: String, version: Int): Future[Unit] = validatePath(path) flatMap { _ =>
-    write[DeleteResponse](PacketRequest(OpCodes.Delete, DeleteRequest(path, version), DeleteResponse.unapply)).unit
+    write(DeleteRequest(path, version)).unit
   }
 
   /**
@@ -225,8 +222,7 @@ class ZkClient(
   def exists(path: String, watch: Boolean = false): Future[ExistsResponse] = validatePath(path) flatMap { _ =>
     val watcher = if (watch) Some(watchManager.addWatch(WatchType.Data, path)) else None
 
-    val req = PacketRequest(OpCodes.Exists, ExistsRequest(path, watch), ExistsResponsePacket.unapply)
-    write[ExistsResponsePacket](req) transform {
+    write[ExistsResponsePacket](ExistsRequest(path, watch)) transform {
       case Return(ExistsResponsePacket(stat)) => Future.value(ExistsResponse.NodeStat(stat, watcher))
       case Throw(KeeperException.NoNode) => Future.value(ExistsResponse.NoNode(watcher))
     }
@@ -240,8 +236,7 @@ class ZkClient(
    * @param path the given path for the node
    */
   def getACL(path: String): Future[GetACLResponse] = validatePath(path) flatMap { _ =>
-    val req = PacketRequest(OpCodes.GetACL, GetACLRequest(path), GetACLResponsePacket.unapply)
-    write[GetACLResponsePacket](req) map { rep => GetACLResponse(rep.stat, rep.acl) }
+    write(GetACLRequest(path)) map { rep => GetACLResponse(rep.stat, rep.acl) }
   }
 
   /**
@@ -263,9 +258,7 @@ class ZkClient(
    */
   def getChildren(path: String, watch: Boolean = false): Future[GetChildrenResponse] = validatePath(path) flatMap { _ =>
     val watcher = if (watch) Some(watchManager.addWatch(WatchType.Children, path)) else None
-
-    val req = PacketRequest(OpCodes.GetChildren, GetChildren2Request(path, watch), GetChildren2Response.unapply)
-    write[GetChildren2Response](req) map { rep => GetChildrenResponse(rep.stat, rep.children, watcher) }
+    write(GetChildren2Request(path, watch)) map { rep => GetChildrenResponse(rep.stat, rep.children, watcher) }
   }
 
   /**
@@ -284,9 +277,7 @@ class ZkClient(
    */
   def getData(path: String, watch: Boolean = false): Future[GetDataResponse] = validatePath(path) flatMap { _ =>
     val watcher = if (watch) Some(watchManager.addWatch(WatchType.Data, path)) else None
-
-    val req = PacketRequest(OpCodes.GetData, GetDataRequest(path, watch), GetDataResponsePacket.unapply)
-    write[GetDataResponsePacket](req) map { rep => GetDataResponse(rep.stat, Buf.ByteArray(rep.data), watcher) }
+    write(GetDataRequest(path, watch)) map { rep => GetDataResponse(rep.stat, Buf.ByteArray(rep.data), watcher) }
   }
 
   /**
@@ -304,8 +295,7 @@ class ZkClient(
    * @param version the expected node version.
    */
   def setACL(path: String, acl: Seq[ACL], version: Int): Future[Stat] = validatePath(path) flatMap { _ =>
-    val req = PacketRequest(OpCodes.SetACL, SetACLRequest(path, acl, version), SetACLResponse.unapply)
-    write[SetACLResponse](req) map { _.stat }
+    write(SetACLRequest(path, acl, version)) map { _.stat }
   }
 
   /**
@@ -331,8 +321,7 @@ class ZkClient(
   def setData(path: String, data: Buf, version: Int): Future[Stat] = validatePath(path) flatMap { _ =>
     val bytes = new Array[Byte](data.length)
     data.write(bytes, 0)
-    val req = PacketRequest(OpCodes.SetData, SetDataRequest(path, bytes, version), SetDataResponse.unapply)
-    write[SetDataResponse](req) map { _.stat }
+    write(SetDataRequest(path, bytes, version)) map { _.stat }
   }
 
   /**
@@ -349,8 +338,7 @@ class ZkClient(
    * @param local whether watches can be removed locally when there is no server connection
    */
   def removeAllWatches(typ: WatchType, path: String): Future[Unit] = validatePath(path) flatMap { _ =>
-    val req = PacketRequest(OpCodes.RemoveWatches, RemoveWatchesRequest(path, typ.value), RemoveWatchesResponse.unapply)
-    write[RemoveWatchesResponse](req).unit
+    write(RemoveWatchesRequest(path, typ.value)).unit
   }
 
   //def multi(ops: Seq[Op]): Future[Seq[OpResult]]
