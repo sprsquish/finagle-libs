@@ -752,6 +752,16 @@ object CheckWatchesRequest {
   }
 }
 
+// a fake response because finagle requires one
+case class CheckWatchesResponse() extends Packet {
+  def buf: Buf = Buf.Empty
+}
+
+object CheckWatchesResponse {
+  def unapply(buf: Buf): Option[(CheckWatchesResponse, Buf)] =
+    Some(CheckWatchesResponse(), buf)
+}
+
 case class RemoveWatchesRequest(
   path: String,
   typ: Int
@@ -766,6 +776,16 @@ object RemoveWatchesRequest {
     val BufString(path, BufInt(typ, rem)) = buf
     Some(RemoveWatchesRequest(path, typ), rem)
   }
+}
+
+// a fake response because finagle requires one
+case class RemoveWatchesResponse() extends Packet {
+  def buf: Buf = Buf.Empty
+}
+
+object RemoveWatchesResponse {
+  def unapply(buf: Buf): Option[(RemoveWatchesResponse, Buf)] =
+    Some(RemoveWatchesResponse(), buf)
 }
 
 case class LearnerInfo(

@@ -10,58 +10,52 @@ object WatchType {
   object Any extends WatchType(3)
 }
 
+/**
+ * A Watch is a specialized Future[WatchedEvent]. It augments the
+ * Future interface with a `cancel` method to cancel the watch and
+ * a `watchType` which defines what this watch is listening for.
+ */
 trait Watch extends Future[WatchedEvent] {
-  def remove(): Future[Unit]
-}
-trait PendingWatch extends Promise[WatchedEvent] with Watch
+  val watchType: WatchType
 
-trait WatchManager {
+  /**
+   * Cancel the watcher. This will not tell the server to cancel
+   * the watch but will ensure this watch is never fired.
+   *
+   * @param local whether watch can be removed locally when there is no server connection
+   */
+  def cancel(local: Boolean): Future[Unit]
+}
+
+class WatchManager(checkWatch: (WatchType, String) => Future[Unit]) {
+  private trait PendingWatch extends Promise[WatchedEvent] with Watch
+
+  private[this] val dataTable = new mutable.HashMap[String, Set[PendingWatch]]
+  private[this] val childTable = new mutable.HashMap[String, Set[PendingWatch]]
+
   def apply(evt: WatcherEvent): Future[Unit] =
     apply(WatchedEvent(evt))
-
-  def apply(evt: WatchedEvent): Future[Unit]
-
-  def existsWatch(path: String): Future[WatchedEvent]
-  def dataWatch(path: String): Future[WatchedEvent]
-  def childrenWatch(path: String): Future[WatchedEvent]
-}
-
-class DefaultWatchManager(
-  sendRemoveWatch: (WatchType, String) => Future[Unit]
-) extends WatchManager {
-  private[this] val dataTable = new mutable.HashMap[String, PendingWatch]
-  private[this] val existTable = new mutable.HashMap[String, PendingWatch]
-  private[this] val childTable = new mutable.HashMap[String, PendingWatch]
 
   // TODO: should this be shunted off to another threadpool?
   // for now the read thread will end up satisfying all watches
   def apply(evt: WatchedEvent): Future[Unit] = {
     val watches = evt.typ match {
       case EventType.None =>
-        Seq(
-          watchesFor(dataTable, None),
-          watchesFor(existTable, None),
-          watchesFor(childTable, None)
-        ).flatten
+        watchesFor(dataTable, None) ++
+        watchesFor(childTable, None)
 
       case EventType.NodeDataChanged | EventType.NodeCreated =>
-        Seq(
-          watchesFor(dataTable, evt.path),
-          watchesFor(existTable, evt.path)
-        ).flatten
+        watchesFor(dataTable, evt.path)
 
       case EventType.NodeChildrenChanged =>
         watchesFor(childTable, evt.path)
 
       case EventType.NodeDeleted =>
-        Seq(
-          watchesFor(dataTable, evt.path),
-          watchesFor(existTable, evt.path),
-          watchesFor(childTable, evt.path)
-        ).flatten
+        watchesFor(dataTable, evt.path) ++
+        watchesFor(childTable, evt.path)
 
       case _ =>
-        Seq.empty[PendingWatch]
+        Set.empty[PendingWatch]
     }
 
     watches foreach { _.setValue(evt) }
@@ -70,57 +64,61 @@ class DefaultWatchManager(
   }
 
   private[this] def watchesFor(
-    table: mutable.Map[String, PendingWatch],
+    table: mutable.Map[String, Set[PendingWatch]],
     path: Option[String]
-  ): Seq[PendingWatch] =
-    table.synchronized {
-      path match {
-        case Some(p) => table.remove(p).toSeq
-        case None =>
-          val watches = table.values.toList
-          table.clear()
-          watches
-      }
+  ): Set[PendingWatch] = table.synchronized {
+    path match {
+      case Some(p) => table.remove(p).getOrElse(Set.empty[PendingWatch])
+      case None =>
+        val watches = table.values.foldLeft(Set.empty[PendingWatch])(_ ++ _)
+        table.clear()
+        watches
+    }
+  }
+
+  private[this] def getTable(typ: WatchType): mutable.Map[String, Set[PendingWatch]] =
+    typ match {
+      case WatchType.Data => dataTable
+      case WatchType.Children => childTable
+      case WatchType.Any => throw new Exception("no table for WatchType.Any")
     }
 
   private[this] def removeWatch(
-    table: mutable.Map[String, Set[PendingWatch]],
     path: String,
-    watch: PendingWatch
-  ): Future[Unit] = table.synchronized {
-    table.remove(path) map { set =>
-      val newSet = set - watch
-      if (!newSet.isEmpty) {
-        table(path) = newSet
-        Future.Done
-      } else {
-        sendRemoveWatch(typ, path)
+    watch: PendingWatch,
+    local: Boolean
+  ): Future[Unit] = {
+    val table = getTable(watch.watchType)
+    def doRemove(): Unit = table.synchronized {
+      table.remove(path) map { set =>
+        val newSet = set - watch
+        if (!newSet.isEmpty) table(path) = newSet
       }
-    } getOrElse(Future.Done)
+    }
+
+    checkWatch(watch.watchType, path) onSuccess { _ =>
+      doRemove()
+    } onFailure { _ =>
+      if (local) doRemove()
+    }
   }
 
-  private[this] def addWatch(
-    table: mutable.Map[String, Set[PendingWatch]],
-    path: String
-  ): Watch = table.synchronized {
-    val watch = new PendingWatch { self =>
-      def remove(): Future[Unit] = removeWatch(table, path, self)
-    }
-    watch.setInterruptHandler { case _: Throwable => watch.remove() }
+  def addWatch(typ: WatchType, path: String): Watch = {
+    val table = getTable(typ)
 
-    val set = table.getOrElse(path, Set.empty[PendingWatch])
-    table(path) = set + watch
+    val watch = new PendingWatch {
+      def cancel(local: Boolean): Future[Unit] =
+        removeWatch(path, this, local)
+      val watchType = typ
+    }
+    watch.setInterruptHandler { case _: Throwable => watch.cancel(true) }
+
+    table.synchronized {
+      val set = table.getOrElse(path, Set.empty[PendingWatch])
+      table(path) = set + watch
+    }
     watch
   }
-
-  def existsWatch(path: String): Future[WatchedEvent] =
-    existTable.synchronized { existTable.getOrElseUpdate(path, new PendingWatch) }
-
-  def dataWatch(path: String): Future[WatchedEvent] =
-    dataTable.synchronized { dataTable.getOrElseUpdate(path, new PendingWatch) }
-
-  def childrenWatch(path: String): Future[WatchedEvent] =
-    childTable.synchronized { childTable.getOrElseUpdate(path, new PendingWatch) }
 }
 
 case class WatchedEvent(typ: EventType, state: KeeperState, path: Option[String] = None)

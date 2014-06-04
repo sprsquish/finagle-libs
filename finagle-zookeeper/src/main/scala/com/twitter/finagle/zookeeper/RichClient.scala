@@ -32,9 +32,10 @@ object ExistsResponse {
 class ZkClient(
   factory: ServiceFactory[ZkRequest, ZkResponse],
   timeout: Duration = 30.seconds,
-  readOnly: Boolean = false,
-  watchManager: WatchManager = new DefaultWatchManager
+  readOnly: Boolean = false
 ) {
+  private[this] val watchManager = new WatchManager(checkWatch)
+
   @volatile private[this] var lastZxid: Long = 0L
   @volatile private[this] var sessionId: Long = 0L
   @volatile private[this] var sessionPasswd: Array[Byte] = new Array[Byte](16)
@@ -89,6 +90,47 @@ class ZkClient(
         else
           write(req)
     }
+
+  private[this] def checkWatch(typ: WatchType, path: String): Future[Unit] = {
+    val req = PacketRequest(OpCodes.CheckWatches, CheckWatchesRequest(path, typ.value), CheckWatchesResponse.unapply)
+    write[CheckWatchesResponse](req).unit
+  }
+
+  private[zookeeper] def validatePath(path: String): Future[Unit] = {
+    if (path == null)
+      return Future.exception(new IllegalArgumentException("Path cannot be null"))
+
+    if (path.length() == 0)
+      return Future.exception(new IllegalArgumentException("Path length must be > 0"))
+
+    if (path.charAt(0) != '/')
+      return Future.exception(new IllegalArgumentException("Path must start with / character"))
+
+    if (path.length == 1)
+      return Future.Done
+
+    if (path.charAt(path.length() - 1) == '/')
+      return Future.exception(new IllegalArgumentException("Path must not end with / character"))
+
+    def err(reason: String): Future[Unit] =
+      Future.exception(new IllegalArgumentException("Invalid path string \"" + path + "\" caused by " + reason))
+
+    path.split("/").drop(1) foreach {
+      case "" => return err("empty node name specified")
+      case ".." | "." => return err("relative paths not allowed")
+      case s => s foreach { c =>
+        if (c == 0) return err("null character not allowed")
+
+        if (c > '\u0000' && c <= '\u001f'
+          || c >= '\u007f' && c <= '\u009F'
+          || c >= '\ud800' && c <= '\uf8ff'
+          || c >= '\ufff0' && c <= '\uffff'
+        ) return err("invalid character")
+      }
+    }
+
+    Future.Done
+  }
 
   /**
    * Create a node with the given path. The node data will be the given data,
@@ -181,12 +223,12 @@ class ZkClient(
    * @param watcher whether to watch this node
    */
   def exists(path: String, watch: Boolean = false): Future[ExistsResponse] = validatePath(path) flatMap { _ =>
-    val watchFuture = if (watch) Some(watchManager.existsWatch(path)) else None
+    val watcher = if (watch) Some(watchManager.addWatch(WatchType.Data, path)) else None
 
     val req = PacketRequest(OpCodes.Exists, ExistsRequest(path, watch), ExistsResponsePacket.unapply)
     write[ExistsResponsePacket](req) transform {
-      case Return(ExistsResponsePacket(stat)) => Future.value(ExistsResponse.NodeStat(stat, watchFuture))
-      case Throw(KeeperException.NoNode) => Future.value(ExistsResponse.NoNode(watchFuture))
+      case Return(ExistsResponsePacket(stat)) => Future.value(ExistsResponse.NodeStat(stat, watcher))
+      case Throw(KeeperException.NoNode) => Future.value(ExistsResponse.NoNode(watcher))
     }
   }
 
@@ -220,10 +262,10 @@ class ZkClient(
    * @param watcher whether to watch this node
    */
   def getChildren(path: String, watch: Boolean = false): Future[GetChildrenResponse] = validatePath(path) flatMap { _ =>
-    val watchFuture = if (watch) Some(watchManager.childrenWatch(path)) else None
+    val watcher = if (watch) Some(watchManager.addWatch(WatchType.Children, path)) else None
 
     val req = PacketRequest(OpCodes.GetChildren, GetChildren2Request(path, watch), GetChildren2Response.unapply)
-    write[GetChildren2Response](req) map { rep => GetChildrenResponse(rep.stat, rep.children, watchFuture) }
+    write[GetChildren2Response](req) map { rep => GetChildrenResponse(rep.stat, rep.children, watcher) }
   }
 
   /**
@@ -241,10 +283,10 @@ class ZkClient(
    * @param watcher whether to watch this node
    */
   def getData(path: String, watch: Boolean = false): Future[GetDataResponse] = validatePath(path) flatMap { _ =>
-    val watchFuture = if (watch) Some(watchManager.dataWatch(path)) else None
+    val watcher = if (watch) Some(watchManager.addWatch(WatchType.Data, path)) else None
 
     val req = PacketRequest(OpCodes.GetData, GetDataRequest(path, watch), GetDataResponsePacket.unapply)
-    write[GetDataResponsePacket](req) map { rep => GetDataResponse(rep.stat, Buf.ByteArray(rep.data), watchFuture) }
+    write[GetDataResponsePacket](req) map { rep => GetDataResponse(rep.stat, Buf.ByteArray(rep.data), watcher) }
   }
 
   /**
@@ -293,41 +335,23 @@ class ZkClient(
     write[SetDataResponse](req) map { _.stat }
   }
 
-  //def multi(ops: Seq[Op]): Future[Seq[OpResult]]
-
-  private[zookeeper] def validatePath(path: String): Future[Unit] = {
-    if (path == null)
-      return Future.exception(new IllegalArgumentException("Path cannot be null"))
-
-    if (path.length() == 0)
-      return Future.exception(new IllegalArgumentException("Path length must be > 0"))
-
-    if (path.charAt(0) != '/')
-      return Future.exception(new IllegalArgumentException("Path must start with / character"))
-
-    if (path.length == 1)
-      return Future.Done
-
-    if (path.charAt(path.length() - 1) == '/')
-      return Future.exception(new IllegalArgumentException("Path must not end with / character"))
-
-    def err(reason: String): Future[Unit] =
-      Future.exception(new IllegalArgumentException("Invalid path string \"" + path + "\" caused by " + reason))
-
-    path.split("/").drop(1) foreach {
-      case "" => return err("empty node name specified")
-      case ".." | "." => return err("relative paths not allowed")
-      case s => s foreach { c =>
-        if (c == 0) return err("null character not allowed")
-
-        if (c > '\u0000' && c <= '\u001f'
-          || c >= '\u007f' && c <= '\u009F'
-          || c >= '\ud800' && c <= '\uf8ff'
-          || c >= '\ufff0' && c <= '\uffff'
-        ) return err("invalid character")
-      }
-    }
-
-    Future.Done
+  /**
+   * For the given znode path, removes all the registered watchers of given
+   * watcherType.
+   *
+   * <p>
+   * A successful call guarantees that, the removed watchers won't be
+   * triggered.
+   * </p>
+   *
+   * @param path the path of the node
+   * @param watcherType the type of watcher to be removed
+   * @param local whether watches can be removed locally when there is no server connection
+   */
+  def removeAllWatches(typ: WatchType, path: String): Future[Unit] = validatePath(path) flatMap { _ =>
+    val req = PacketRequest(OpCodes.RemoveWatches, RemoveWatchesRequest(path, typ.value), RemoveWatchesResponse.unapply)
+    write[RemoveWatchesResponse](req).unit
   }
+
+  //def multi(ops: Seq[Op]): Future[Seq[OpResult]]
 }
