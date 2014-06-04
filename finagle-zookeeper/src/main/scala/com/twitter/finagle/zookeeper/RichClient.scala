@@ -32,9 +32,10 @@ object ExistsResponse {
 class ZkClient(
   factory: ServiceFactory[ZkRequest, ZkResponse],
   timeout: Duration = 30.seconds,
-  readOnly: Boolean = false
+  readOnly: Boolean = false,
+  chroot: Option[String] = None
 ) {
-  private[this] val watchManager = new WatchManager(checkWatch)
+  private[this] val watchManager = new WatchManager(checkWatch, chroot)
 
   @volatile private[this] var lastZxid: Long = 0L
   @volatile private[this] var sessionId: Long = 0L
@@ -130,6 +131,12 @@ class ZkClient(
     Future.Done
   }
 
+  private[this] def prependChroot(path: String): String =
+    chroot map { c => if (path == "/") c else c + path } getOrElse(path)
+
+  private[this] def handlePathIn(path: String): Future[String] =
+    validatePath(path) map { _ => prependChroot(path) }
+
   /**
    * Create a node with the given path. The node data will be the given data,
    * and node acl will be the given acl.
@@ -179,7 +186,7 @@ class ZkClient(
     data: Buf = Buf.Empty,
     acl: Seq[ACL] = Ids.OpenAclUnsafe,
     createMode: CreateMode = CreateMode.Persistent
-  ): Future[String] = validatePath(path) flatMap { _ =>
+  ): Future[String] = handlePathIn(path) flatMap { path =>
     val bytes = new Array[Byte](data.length)
     data.write(bytes, 0)
     write(CreateRequest(path, bytes, acl, createMode.flag)) map { _.path }
@@ -204,7 +211,7 @@ class ZkClient(
    * @param path the path of the node to be deleted.
    * @param version the expected node version.
    */
-  def delete(path: String, version: Int): Future[Unit] = validatePath(path) flatMap { _ =>
+  def delete(path: String, version: Int): Future[Unit] = handlePathIn(path) flatMap { path =>
     write(DeleteRequest(path, version)).unit
   }
 
@@ -219,7 +226,7 @@ class ZkClient(
    * @param path the node path
    * @param watcher whether to watch this node
    */
-  def exists(path: String, watch: Boolean = false): Future[ExistsResponse] = validatePath(path) flatMap { _ =>
+  def exists(path: String, watch: Boolean = false): Future[ExistsResponse] = handlePathIn(path) flatMap { path =>
     val watcher = if (watch) Some(watchManager.addWatch(WatchType.Data, path)) else None
 
     write[ExistsResponsePacket](ExistsRequest(path, watch)) transform {
@@ -235,7 +242,7 @@ class ZkClient(
    *
    * @param path the given path for the node
    */
-  def getACL(path: String): Future[GetACLResponse] = validatePath(path) flatMap { _ =>
+  def getACL(path: String): Future[GetACLResponse] = handlePathIn(path) flatMap { path =>
     write(GetACLRequest(path)) map { rep => GetACLResponse(rep.stat, rep.acl) }
   }
 
@@ -256,7 +263,7 @@ class ZkClient(
    * @param path the node path
    * @param watcher whether to watch this node
    */
-  def getChildren(path: String, watch: Boolean = false): Future[GetChildrenResponse] = validatePath(path) flatMap { _ =>
+  def getChildren(path: String, watch: Boolean = false): Future[GetChildrenResponse] = handlePathIn(path) flatMap { path =>
     val watcher = if (watch) Some(watchManager.addWatch(WatchType.Children, path)) else None
     write(GetChildren2Request(path, watch)) map { rep => GetChildrenResponse(rep.stat, rep.children, watcher) }
   }
@@ -275,7 +282,7 @@ class ZkClient(
    * @param path the node path
    * @param watcher whether to watch this node
    */
-  def getData(path: String, watch: Boolean = false): Future[GetDataResponse] = validatePath(path) flatMap { _ =>
+  def getData(path: String, watch: Boolean = false): Future[GetDataResponse] = handlePathIn(path) flatMap { path =>
     val watcher = if (watch) Some(watchManager.addWatch(WatchType.Data, path)) else None
     write(GetDataRequest(path, watch)) map { rep => GetDataResponse(rep.stat, Buf.ByteArray(rep.data), watcher) }
   }
@@ -294,7 +301,7 @@ class ZkClient(
    * @param acl the acl for the node
    * @param version the expected node version.
    */
-  def setACL(path: String, acl: Seq[ACL], version: Int): Future[Stat] = validatePath(path) flatMap { _ =>
+  def setACL(path: String, acl: Seq[ACL], version: Int): Future[Stat] = handlePathIn(path) flatMap { path =>
     write(SetACLRequest(path, acl, version)) map { _.stat }
   }
 
@@ -318,7 +325,7 @@ class ZkClient(
    * @param data the data to set
    * @param version the expected matching version
    */
-  def setData(path: String, data: Buf, version: Int): Future[Stat] = validatePath(path) flatMap { _ =>
+  def setData(path: String, data: Buf, version: Int): Future[Stat] = handlePathIn(path) flatMap { path =>
     val bytes = new Array[Byte](data.length)
     data.write(bytes, 0)
     write(SetDataRequest(path, bytes, version)) map { _.stat }
@@ -337,7 +344,7 @@ class ZkClient(
    * @param watcherType the type of watcher to be removed
    * @param local whether watches can be removed locally when there is no server connection
    */
-  def removeAllWatches(typ: WatchType, path: String): Future[Unit] = validatePath(path) flatMap { _ =>
+  def removeAllWatches(typ: WatchType, path: String): Future[Unit] = handlePathIn(path) flatMap { path =>
     write(RemoveWatchesRequest(path, typ.value)).unit
   }
 

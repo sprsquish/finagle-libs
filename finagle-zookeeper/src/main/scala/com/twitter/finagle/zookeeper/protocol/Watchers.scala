@@ -27,7 +27,10 @@ trait Watch extends Future[WatchedEvent] {
   def cancel(local: Boolean): Future[Unit]
 }
 
-class WatchManager(checkWatch: (WatchType, String) => Future[Unit]) {
+class WatchManager(
+  checkWatch: (WatchType, String) => Future[Unit],
+  chroot: Option[String] = None
+) {
   private trait PendingWatch extends Promise[WatchedEvent] with Watch
 
   private[this] val dataTable = new mutable.HashMap[String, Set[PendingWatch]]
@@ -58,7 +61,13 @@ class WatchManager(checkWatch: (WatchType, String) => Future[Unit]) {
         Set.empty[PendingWatch]
     }
 
-    watches foreach { _.setValue(evt) }
+    val event = chroot flatMap { c =>
+      evt.path map { path =>
+        evt.copy(path = Some(path.substring(c.length)))
+      }
+    } getOrElse(evt)
+
+    watches foreach { _.setValue(event) }
 
     Future.Done
   }
