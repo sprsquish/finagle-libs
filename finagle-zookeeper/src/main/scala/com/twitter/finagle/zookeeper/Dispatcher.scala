@@ -53,50 +53,65 @@ private[finagle] class ClientDispatcher(
 
   private[this] val curXid = new AtomicInteger(0)
   private[this] val started = new AtomicBoolean(false)
-  private[this] val queue = new LinkedBlockingQueue[(Int, Buf => Option[(Packet, Buf)], Promise[ZkResponse])]()
+  private[this] val queue = new LinkedBlockingQueue[PendingResponse]()
 
-  private[this] def actOnRead(watchManager: WatchManager): Buf => Future[Unit] = {
-    // ping
-    case ReplyHeader(ReplyHeader(XID.Ping, _, _), _) =>
-      // TODO: debug logging?
-      Future.Done
+  private class PendingResponse(decoder: Buf => Option[(Packet, Buf)]) {
+    val rep = new Promise[ZkResponse]
+    val xid = curXid.incrementAndGet()
 
-    // auth packet
-    case ReplyHeader(ReplyHeader(XID.Auth, _, err), _) =>
-      if (err != KeeperException.AuthFailed) Future.Done else {
-        // TODO: state = State.AuthFailed
-        watchManager(WatchedEvent(EventType.None, KeeperState.AuthFailed))
-      }
-
-    // notification
-    case ReplyHeader(ReplyHeader(XID.Notification, _, _), WatcherEvent(evt, _)) =>
-      watchManager(evt)
-
-    // TODO: implement sasl auth
-    // sasl auth in progress
-    //case _ if saslAuth =>
-      //val GetSASLRequest(saslReq, _) = rem
-      //Future.Done
-
-    case ReplyHeader(ReplyHeader(xid, zxid, KeeperException(err)), rem) =>
-      val req = queue.synchronized { queue.poll() }
-
-      // we don't have any requests to service. this is an unrecoverable exception
-      if (req == null) throw new EmptyRequestQueueException(xid)
-
-      val (reqXid, decoder, promise) = req
-
-      // server and client are somehow out of sync. we can't recover
-      if (reqXid != xid) throw new OutOfOrderException
-
-      if (err != KeeperException.Ok) promise.setValue(ErrorResponse(zxid, err)) else {
-        decoder(rem) match {
-          case Some((packet, _)) =>
-            promise.setValue(PacketResponse(zxid, packet))
+    def apply(header: ReplyHeader, buf: Buf) {
+      val err = KeeperException(header.err)
+      if (err != KeeperException.Ok) rep.setValue(ErrorResponse(header.zxid, err)) else {
+        decoder(buf) match {
+          case Some((packet, _)) => rep.setValue(PacketResponse(header.zxid, packet))
           case None => // TODO: invalid response
         }
       }
-      Future.Done
+    }
+
+    def apply(exp: Throwable) {
+      rep.setException(exp)
+    }
+  }
+
+  private[this] def actOnRead(watchManager: WatchManager)(buf: Buf): Future[Unit] = {
+    val ReplyHeader(header, rem) = buf
+    header match {
+      // ping
+      case ReplyHeader(XID.Ping, _, _) =>
+        // TODO: debug logging?
+        Future.Done
+
+      // auth packet
+      case ReplyHeader(XID.Auth, _, err) =>
+        if (err != KeeperException.AuthFailed) Future.Done else {
+          // TODO: state = State.AuthFailed
+          watchManager(WatchedEvent(EventType.None, KeeperState.AuthFailed))
+        }
+
+      // notification
+      case ReplyHeader(XID.Notification, _, _) =>
+        val WatcherEvent(evt, _) = rem
+        watchManager(evt)
+
+      // TODO: implement sasl auth
+      // sasl auth in progress
+      //case _ if saslAuth =>
+        //val GetSASLRequest(saslReq, _) = rem
+        //Future.Done
+
+      case ReplyHeader(xid, zxid, _) =>
+        val rep = queue.synchronized { queue.poll() }
+
+        // we don't have any requests to service. this is an unrecoverable exception
+        if (rep == null) throw new EmptyRequestQueueException(xid)
+
+        // server and client are somehow out of sync. we can't recover
+        if (rep.xid != xid) throw new OutOfOrderException
+
+        rep(header, rem)
+        Future.Done
+    }
   }
 
   // TODO: calculate how often?
@@ -111,8 +126,7 @@ private[finagle] class ClientDispatcher(
     queue.synchronized {
       var item = queue.poll()
       while (item != null) {
-        val (_, _, p) = item
-        p.setException(exp)
+        item(exp)
         item = queue.poll()
       }
     }
@@ -136,21 +150,18 @@ private[finagle] class ClientDispatcher(
     // XXX: HACK! Why doesn't close propogate from the client?
     case CloseConn(deadline) => close(deadline) map { _ => ClosedConn }
 
-    case sd@StartDispatcher(watchManager, readOnly, connPacket) =>
+    case sd: StartDispatcher =>
       if (started.getAndSet(true))
         Future.exception(new ConnectionAlreadyStarted)
       else
         start(sd) map { rep => PacketResponse(0, rep) }
 
-    case PacketRequest(packet) if started.get() =>
-      val repPromise = new Promise[ZkResponse]
-      val xId = curXid.incrementAndGet()
-      val reqBuf = RequestHeader(xId, packet.opCode).buf.concat(packet.buf)
-      // sync to ensure packets go into the queue and transport at the same time
-      synchronized {
-        queue.add((xId, packet.decodeResponse, repPromise))
-        trans.write(reqBuf) flatMap { _ => repPromise }
-      }
+    // sync to ensure packets go into the queue and transport at the same time
+    case PacketRequest(packet) if started.get() => synchronized {
+      val rep = new PendingResponse(packet.decodeResponse)
+      queue.add(rep)
+      trans.write(RequestHeader(rep.xid, packet.opCode).buf.concat(packet.buf)) flatMap { _ => rep.rep }
+    }
 
     case _ if !started.get() =>
       Future.exception(new ConnectionNotStarted)
