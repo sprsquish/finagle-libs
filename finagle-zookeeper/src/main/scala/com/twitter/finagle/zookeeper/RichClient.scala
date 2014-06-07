@@ -85,24 +85,24 @@ class ZkClient(
   private[this] def checkWatch(typ: WatchType, path: String): Future[Unit] =
     write(CheckWatchesRequest(path, typ.value)).unit
 
-  private[zookeeper] def validatePath(path: String): Future[Unit] = {
+  private[this] def validatePath(path: String): Try[String] = Try {
     if (path == null)
-      return Future.exception(new IllegalArgumentException("Path cannot be null"))
+      throw new IllegalArgumentException("Path cannot be null")
 
     if (path.length() == 0)
-      return Future.exception(new IllegalArgumentException("Path length must be > 0"))
+      throw new IllegalArgumentException("Path length must be > 0")
 
     if (path.charAt(0) != '/')
-      return Future.exception(new IllegalArgumentException("Path must start with / character"))
+      throw new IllegalArgumentException("Path must start with / character")
 
     if (path.length == 1)
-      return Future.Done
+      return Return(path)
 
     if (path.charAt(path.length() - 1) == '/')
-      return Future.exception(new IllegalArgumentException("Path must not end with / character"))
+      throw new IllegalArgumentException("Path must not end with / character")
 
-    def err(reason: String): Future[Unit] =
-      Future.exception(new IllegalArgumentException("Invalid path string \"" + path + "\" caused by " + reason))
+    def err(reason: String): Try[String] =
+      Throw(new IllegalArgumentException("Invalid path string \"" + path + "\" caused by " + reason))
 
     path.split("/").drop(1) foreach {
       case "" => return err("empty node name specified")
@@ -118,20 +118,25 @@ class ZkClient(
       }
     }
 
-    Future.Done
+    path
   }
 
   private[this] def prependChroot(path: String): String =
     chroot map { c => if (path == "/") c else c + path } getOrElse(path)
 
-  private[this] def handlePathIn(path: String): Future[String] =
-    validatePath(path) map { _ => prependChroot(path) }
+  private[this] def fixPath(path: String): Try[String] =
+    validatePath(path) map prependChroot
 
-  private[this] def bufToBytes(buf: Buf): Array[Byte] = {
-    val bytes = new Array[Byte](buf.length)
-    buf.write(bytes, 0)
-    bytes
+  private[this] def withPath[T](path: String)(f: String => Future[T]): Future[T] = fixPath(path) match {
+    case Return(p) => f(p)
+    case Throw(e) => Future.exception(e)
   }
+
+  private[this] def handlePathIn(path: String): Future[String] =
+    Future.const(validatePath(path) map { _ => prependChroot(path) })
+
+  private[this] def handlePathOut(path: String): String =
+    chroot map { c => path.substring(c.length) } getOrElse(path)
 
   /**
    * Create a node with the given path. The node data will be the given data,
@@ -183,7 +188,9 @@ class ZkClient(
     acl: Seq[ACL] = Ids.OpenAclUnsafe,
     createMode: CreateMode = CreateMode.Persistent
   ): Future[String] = handlePathIn(path) flatMap { path =>
-    write(CreateRequest(path, bufToBytes(data), acl, createMode.flag)) map { _.path }
+    write(CreateRequest(path, BufArray.toBytes(data), acl, createMode.flag)) map { c =>
+      handlePathOut(c.path)
+    }
   }
 
   /**
@@ -259,7 +266,10 @@ class ZkClient(
    */
   def getChildren(path: String, watch: Boolean = false): Future[GetChildrenResponse] = handlePathIn(path) flatMap { path =>
     val watcher = if (watch) Some(watchManager.addWatch(WatchType.Children, path)) else None
-    write(GetChildren2Request(path, watch)) map { rep => GetChildrenResponse(rep.stat, rep.children, watcher) }
+    write(GetChildren2Request(path, watch)) map { rep =>
+      val children = rep.children map handlePathOut
+      GetChildrenResponse(rep.stat, children, watcher)
+    }
   }
 
   /**
@@ -320,7 +330,7 @@ class ZkClient(
    * @param version the expected matching version
    */
   def setData(path: String, data: Buf, version: Int): Future[Stat] = handlePathIn(path) flatMap { path =>
-    write(SetDataRequest(path, bufToBytes(data), version)) map { _.stat }
+    write(SetDataRequest(path, BufArray.toBytes(data), version)) map { _.stat }
   }
 
   /**
@@ -362,6 +372,10 @@ class ZkClient(
    * which exactly matches the order of the <code>ops</code> input
    * operations.
    */
-  def multi(ops: Seq[Multi.Op]): Future[Seq[Multi.OpResult]] =
-    write(MultiRequest(ops)) map { _.results }
+  def multi(ops: Seq[Multi.Op]): Future[Seq[Multi.OpResult]] = Future.Done flatMap { _ =>
+    // This will throw an exception on a bad path (hence flatMaping over Future.Done)
+    // XXX: There's probably a better way to manager this
+    val fixedOps = ops map { _.handlePathIn(p => fixPath(p).get) }
+    write(MultiRequest(fixedOps)) map { _.results map { _.handlePathOut(handlePathOut) } }
+  }
 }

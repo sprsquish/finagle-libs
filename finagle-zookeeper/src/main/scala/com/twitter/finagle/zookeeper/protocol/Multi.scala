@@ -6,41 +6,49 @@ import scala.annotation.tailrec
 object Multi {
   sealed abstract class Op(opCode: Int) {
     def body: Packet
+    //XXX: there must be a better way to handle the return type
+    def handlePathIn(fixPath: String => String): Op
     def buf: Buf = MultiHeader(opCode, false, -1).buf.concat(body.buf)
   }
 
   object Op {
     case class Create(path: String, data: Buf, acl: Seq[ACL], createMode: CreateMode) extends Op(OpCodes.Create2) {
-      def body: Packet = {
-        val bytes = new Array[Byte](data.length)
-        data.write(bytes, 0)
-        CreateRequest(path, bytes, acl, createMode.flag)
-      }
+      def handlePathIn(fixPath: String => String) = copy(path = fixPath(path))
+      def body: Packet = CreateRequest(path, BufArray.toBytes(data), acl, createMode.flag)
     }
 
     case class Delete(path: String, version: Int) extends Op(OpCodes.Delete) {
+      def handlePathIn(fixPath: String => String): Delete = copy(path = fixPath(path))
       def body: Packet = DeleteRequest(path, version)
     }
 
     case class SetData(path: String, data: Buf, version: Int) extends Op(OpCodes.SetData) {
-      def body: Packet = {
-        val bytes = new Array[Byte](data.length)
-        data.write(bytes, 0)
-        SetDataRequest(path, bytes, version)
-      }
+      def handlePathIn(fixPath: String => String): SetData = copy(path = fixPath(path))
+      def body: Packet = SetDataRequest(path, BufArray.toBytes(data), version)
     }
 
     case class Check(path: String, version: Int) extends Op(OpCodes.Check) {
+      def handlePathIn(fixPath: String => String): Check = copy(path = fixPath(path))
       def body: Packet = CheckVersionRequest(path, version)
     }
   }
 
-  sealed trait OpResult
+  sealed trait OpResult {
+    //XXX: there must be a better way to handle the return type
+    def handlePathOut(fixPath: String => String): OpResult = this
+  }
+
   object OpResult {
-    case class Create(path: String, stat: Stat) extends OpResult
+    case class Create(path: String, stat: Stat) extends OpResult {
+      override def handlePathOut(fixPath: String => String) = copy(path = fixPath(path))
+    }
+
     object Delete extends OpResult
+
     case class SetData(stat: Stat) extends OpResult
+
     object Check extends OpResult
+
     case class Error(err: Int) extends OpResult
   }
 
