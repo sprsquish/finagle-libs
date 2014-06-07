@@ -27,8 +27,6 @@ object ConnectionState {
 }
 
 sealed trait ZkRequest
-// XXX: hack type to get a close request through to the dispatcher
-case class CloseConn(deadline: Time) extends ZkRequest
 case class StartDispatcher(
   watchManager: WatchManager,
   readOnly: Boolean,
@@ -40,8 +38,6 @@ case class PacketRequest[Response <: Packet](
 ) extends ZkRequest
 
 sealed trait ZkResponse { val zxid: Long }
-// XXX: hack type to get a close request through to the dispatcher
-object ClosedConn extends ZkResponse { val zxid = 0L }
 case class PacketResponse(zxid: Long, packet: Packet) extends ZkResponse
 case class ErrorResponse(zxid: Long, err: KeeperException) extends ZkResponse
 
@@ -147,9 +143,6 @@ private[finagle] class ClientDispatcher(
   }
 
   def apply(req: ZkRequest): Future[ZkResponse] = req match {
-    // XXX: HACK! Why doesn't close propogate from the client?
-    case CloseConn(deadline) => close(deadline) map { _ => ClosedConn }
-
     case sd: StartDispatcher =>
       if (started.getAndSet(true))
         Future.exception(new ConnectionAlreadyStarted)

@@ -20,6 +20,7 @@ object NettyTrans extends Netty3Transporter[ChannelBuffer, ChannelBuffer](
 
 object ZooKeeperClient extends DefaultClient[ZkRequest, ZkResponse](
   name = "zookeeper",
+  pool = { _ => identity },
   endpointer = Bridge[Buf, Buf,  ZkRequest, ZkResponse](
     NettyTrans(_, _) map { Transport(_) }, new ClientDispatcher(_)))
 

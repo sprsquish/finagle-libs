@@ -38,9 +38,9 @@ class ZkClient(
   private[this] def start = StartDispatcher(watchManager, readOnly, connReq)
 
   @volatile private[this] var dispatcher: Future[Service[ZkRequest, ZkResponse]] = newDispatcher flatMap { d =>
-    // XXX: a) figure out why we can't just call close(); b) figure out how to handle conn initialization better
+    // XXX: figure out how to handle conn initialization better
     // it seems that starting with 0s makes the ZK server sad
-    d(CloseConn(Time.now)) flatMap { _ => newDispatcher }
+    d.close() flatMap { _ => newDispatcher }
   }
 
   private[this] def newDispatcher: Future[Service[ZkRequest, ZkResponse]] =
@@ -67,8 +67,6 @@ class ZkClient(
   private[this] def write[T <: Packet](req: RequestPacket[T]): Future[T] =
     dispatcher flatMap { svc =>
       svc(PacketRequest(req)) flatMap {
-        // XXX: shouldn't need this
-        case ClosedConn => throw new Exception("should not have hit this")
         case ErrorResponse(zxid, err) =>
           lastZxid = zxid
           Future.exception(err)
