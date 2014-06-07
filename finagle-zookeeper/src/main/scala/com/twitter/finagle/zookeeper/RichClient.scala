@@ -129,6 +129,12 @@ class ZkClient(
   private[this] def handlePathIn(path: String): Future[String] =
     validatePath(path) map { _ => prependChroot(path) }
 
+  private[this] def bufToBytes(buf: Buf): Array[Byte] = {
+    val bytes = new Array[Byte](buf.length)
+    buf.write(bytes, 0)
+    bytes
+  }
+
   /**
    * Create a node with the given path. The node data will be the given data,
    * and node acl will be the given acl.
@@ -179,9 +185,7 @@ class ZkClient(
     acl: Seq[ACL] = Ids.OpenAclUnsafe,
     createMode: CreateMode = CreateMode.Persistent
   ): Future[String] = handlePathIn(path) flatMap { path =>
-    val bytes = new Array[Byte](data.length)
-    data.write(bytes, 0)
-    write(CreateRequest(path, bytes, acl, createMode.flag)) map { _.path }
+    write(CreateRequest(path, bufToBytes(data), acl, createMode.flag)) map { _.path }
   }
 
   /**
@@ -318,9 +322,7 @@ class ZkClient(
    * @param version the expected matching version
    */
   def setData(path: String, data: Buf, version: Int): Future[Stat] = handlePathIn(path) flatMap { path =>
-    val bytes = new Array[Byte](data.length)
-    data.write(bytes, 0)
-    write(SetDataRequest(path, bytes, version)) map { _.stat }
+    write(SetDataRequest(path, bufToBytes(data), version)) map { _.stat }
   }
 
   /**
