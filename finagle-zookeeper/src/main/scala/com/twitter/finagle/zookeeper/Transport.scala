@@ -2,7 +2,7 @@ package com.twitter.finagle.zookeeper
 
 import com.twitter.finagle.netty3.ChannelBufferBuf
 import com.twitter.finagle.transport.{Transport => FTransport}
-import com.twitter.finagle.zookeeper.protocol.{BufArray, BufInt}
+import com.twitter.finagle.zookeeper.protocol.BufArray
 import com.twitter.io.Buf
 import com.twitter.util.{Future, Time}
 import org.jboss.netty.buffer.{ChannelBuffer, ChannelBuffers}
@@ -17,7 +17,7 @@ case class Transport(
   def close(deadline: Time) = trans.close(deadline)
 
   def write(req: Buf): Future[Unit] = {
-    val framedReq = BufInt(req.length).concat(req)
+    val framedReq = Buf.U32BE(req.length).concat(req)
     val bytes = new Array[Byte](framedReq.length)
     framedReq.write(bytes, 0)
     trans.write(ChannelBuffers.wrappedBuffer(bytes))
@@ -25,7 +25,7 @@ case class Transport(
 
   // the dispatcher runs a single read loop. this is safe
   def read(): Future[Buf] =
-    read(4) flatMap { case BufInt(len, _) => read(len) }
+    read(4) flatMap { case Buf.U32BE(len, _) => read(len) }
 
   @volatile private[this] var buf = Buf.Empty
   private[this] def read(len: Int): Future[Buf] =

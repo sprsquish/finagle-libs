@@ -26,13 +26,13 @@ object Id {
 
 case class ACL(perms: Int, id: Id) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(perms))
+    .concat(Buf.U32BE(perms))
     .concat(id.buf)
 }
 
 object ACL {
   def unapply(buf: Buf): Option[(ACL, Buf)] = {
-    val BufInt(perms, Id(id, rem)) = buf
+    val Buf.U32BE(perms, Id(id, rem)) = buf
     Some(ACL(perms, id), rem)
   }
 }
@@ -51,32 +51,32 @@ case class Stat(
   pzxid: Long
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufLong(czxid))
-    .concat(BufLong(mzxid))
-    .concat(BufLong(ctime))
-    .concat(BufLong(mtime))
-    .concat(BufInt(version))
-    .concat(BufInt(cversion))
-    .concat(BufInt(aversion))
-    .concat(BufLong(ephemeralOwner))
-    .concat(BufInt(dataLength))
-    .concat(BufInt(numChildren))
-    .concat(BufLong(pzxid))
+    .concat(Buf.U64BE(czxid))
+    .concat(Buf.U64BE(mzxid))
+    .concat(Buf.U64BE(ctime))
+    .concat(Buf.U64BE(mtime))
+    .concat(Buf.U32BE(version))
+    .concat(Buf.U32BE(cversion))
+    .concat(Buf.U32BE(aversion))
+    .concat(Buf.U64BE(ephemeralOwner))
+    .concat(Buf.U32BE(dataLength))
+    .concat(Buf.U32BE(numChildren))
+    .concat(Buf.U64BE(pzxid))
 }
 
 object Stat {
   def unapply(buf: Buf): Option[(Stat, Buf)] = {
-    val BufLong(czxid,
-        BufLong(mzxid,
-        BufLong(ctime,
-        BufLong(mtime,
-        BufInt(version,
-        BufInt(cversion,
-        BufInt(aversion,
-        BufLong(ephemeralOwner,
-        BufInt(dataLength,
-        BufInt(numChildren,
-        BufLong(pzxid,
+    val Buf.U64BE(czxid,
+        Buf.U64BE(mzxid,
+        Buf.U64BE(ctime,
+        Buf.U64BE(mtime,
+        Buf.U32BE(version,
+        Buf.U32BE(cversion,
+        Buf.U32BE(aversion,
+        Buf.U64BE(ephemeralOwner,
+        Buf.U32BE(dataLength,
+        Buf.U32BE(numChildren,
+        Buf.U64BE(pzxid,
         rem
     ))))))))))) = buf
     Some(Stat(czxid, mzxid, ctime, mtime, version, cversion, aversion, ephemeralOwner, dataLength, numChildren, pzxid), rem)
@@ -95,28 +95,28 @@ case class StatPersisted(
   pzxid: Long
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufLong(czxid))
-    .concat(BufLong(mzxid))
-    .concat(BufLong(ctime))
-    .concat(BufLong(mtime))
-    .concat(BufInt(version))
-    .concat(BufInt(cversion))
-    .concat(BufInt(aversion))
-    .concat(BufLong(ephemeralOwner))
-    .concat(BufLong(pzxid))
+    .concat(Buf.U64BE(czxid))
+    .concat(Buf.U64BE(mzxid))
+    .concat(Buf.U64BE(ctime))
+    .concat(Buf.U64BE(mtime))
+    .concat(Buf.U32BE(version))
+    .concat(Buf.U32BE(cversion))
+    .concat(Buf.U32BE(aversion))
+    .concat(Buf.U64BE(ephemeralOwner))
+    .concat(Buf.U64BE(pzxid))
 }
 
 object StatPersisted {
   def unapply(buf: Buf): Option[(StatPersisted, Buf)] = {
-    val BufLong(czxid,
-        BufLong(mzxid,
-        BufLong(ctime,
-        BufLong(mtime,
-        BufInt(version,
-        BufInt(cversion,
-        BufInt(aversion,
-        BufLong(ephemeralOwner,
-        BufLong(pzxid,
+    val Buf.U64BE(czxid,
+        Buf.U64BE(mzxid,
+        Buf.U64BE(ctime,
+        Buf.U64BE(mtime,
+        Buf.U32BE(version,
+        Buf.U32BE(cversion,
+        Buf.U32BE(aversion,
+        Buf.U64BE(ephemeralOwner,
+        Buf.U64BE(pzxid,
         rem
     ))))))))) = buf
     Some(StatPersisted(czxid, mzxid, ctime, mtime, version, cversion, aversion, ephemeralOwner, pzxid), rem)
@@ -131,19 +131,19 @@ case class ConnectRequest(
   passwd: Array[Byte]
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(protocolVersion))
-    .concat(BufLong(lastZxidSeen))
-    .concat(BufInt(timeOut))
-    .concat(BufLong(sessionId))
+    .concat(Buf.U32BE(protocolVersion))
+    .concat(Buf.U64BE(lastZxidSeen))
+    .concat(Buf.U32BE(timeOut))
+    .concat(Buf.U64BE(sessionId))
     .concat(BufArray(passwd))
 }
 
 object ConnectRequest {
   def unapply(buf: Buf): Option[(ConnectRequest, Buf)] = {
-    val BufInt(protocolVersion,
-        BufLong(lastZxidSeen,
-        BufInt(timeOut,
-        BufLong(sessionId,
+    val Buf.U32BE(protocolVersion,
+        Buf.U64BE(lastZxidSeen,
+        Buf.U32BE(timeOut,
+        Buf.U64BE(sessionId,
         BufArray(passwd,
         rem
     ))))) = buf
@@ -158,17 +158,17 @@ case class ConnectResponse(
   passwd: Array[Byte]
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(protocolVersion))
-    .concat(BufInt(timeOut))
-    .concat(BufLong(sessionId))
+    .concat(Buf.U32BE(protocolVersion))
+    .concat(Buf.U32BE(timeOut))
+    .concat(Buf.U64BE(sessionId))
     .concat(BufArray(passwd))
 }
 
 object ConnectResponse {
   def unapply(buf: Buf): Option[(ConnectResponse, Buf)] = {
-    val BufInt(protocolVersion,
-        BufInt(timeOut,
-        BufLong(sessionId,
+    val Buf.U32BE(protocolVersion,
+        Buf.U32BE(timeOut,
+        Buf.U64BE(sessionId,
         BufArray(passwd,
         rem
     )))) = buf
@@ -183,7 +183,7 @@ case class SetWatches(
   childWatches: Seq[String]
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufLong(relativeZxid))
+    .concat(Buf.U64BE(relativeZxid))
     .concat(BufSeqString(dataWatches))
     .concat(BufSeqString(existWatches))
     .concat(BufSeqString(childWatches))
@@ -191,7 +191,7 @@ case class SetWatches(
 
 object SetWatches {
   def unapply(buf: Buf): Option[(SetWatches, Buf)] = {
-    val BufLong(relativeZxid,
+    val Buf.U64BE(relativeZxid,
         BufSeqString(dataWatches,
         BufSeqString(existWatches,
         BufSeqString(childWatches,
@@ -206,13 +206,13 @@ case class RequestHeader(
   typ: Int
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(xid))
-    .concat(BufInt(typ))
+    .concat(Buf.U32BE(xid))
+    .concat(Buf.U32BE(typ))
 }
 
 object RequestHeader {
   def unapply(buf: Buf): Option[(RequestHeader, Buf)] = {
-    val BufInt(xid, BufInt(typ, rem)) = buf
+    val Buf.U32BE(xid, Buf.U32BE(typ, rem)) = buf
     Some(RequestHeader(xid, typ), rem)
   }
 }
@@ -244,14 +244,14 @@ case class MultiHeader(
   err: Int
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(typ))
+    .concat(Buf.U32BE(typ))
     .concat(BufBool(done))
-    .concat(BufInt(err))
+    .concat(Buf.U32BE(err))
 }
 
 object MultiHeader {
   def unapply(buf: Buf): Option[(MultiHeader, Buf)] = {
-    val BufInt(typ, BufBool(done, BufInt(err, rem))) = buf
+    val Buf.U32BE(typ, BufBool(done, Buf.U32BE(err, rem))) = buf
     Some(MultiHeader(typ, done, err), rem)
   }
 }
@@ -262,14 +262,14 @@ case class AuthPacket(
   auth: Array[Byte]
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(typ))
+    .concat(Buf.U32BE(typ))
     .concat(BufString(scheme))
     .concat(BufArray(auth))
 }
 
 object AuthPacket {
   def unapply(buf: Buf): Option[(AuthPacket, Buf)] = {
-    val BufInt(typ, BufString(scheme, BufArray(auth, rem))) = buf
+    val Buf.U32BE(typ, BufString(scheme, BufArray(auth, rem))) = buf
     Some(AuthPacket(typ, scheme, auth), rem)
   }
 }
@@ -280,14 +280,14 @@ case class ReplyHeader(
   err: Int
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(xid))
-    .concat(BufLong(zxid))
-    .concat(BufInt(err))
+    .concat(Buf.U32BE(xid))
+    .concat(Buf.U64BE(zxid))
+    .concat(Buf.U32BE(err))
 }
 
 object ReplyHeader {
   def unapply(buf: Buf): Option[(ReplyHeader, Buf)] = {
-    val BufInt(xid, BufLong(zxid, BufInt(err, rem))) = buf
+    val Buf.U32BE(xid, Buf.U64BE(zxid, Buf.U32BE(err, rem))) = buf
     Some(ReplyHeader(xid, zxid, err), rem)
   }
 }
@@ -320,12 +320,12 @@ case class SetDataRequest(
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufArray(data))
-    .concat(BufInt(version))
+    .concat(Buf.U32BE(version))
 }
 
 object SetDataRequest {
   def unapply(buf: Buf): Option[(SetDataRequest, Buf)] = {
-    val BufString(path, BufArray(data, BufInt(version, rem))) = buf
+    val BufString(path, BufArray(data, Buf.U32BE(version, rem))) = buf
     Some(SetDataRequest(path, data, version), rem)
   }
 }
@@ -340,7 +340,7 @@ case class ReconfigRequest(
     .concat(BufString(joiningServers))
     .concat(BufString(leavingServers))
     .concat(BufString(newMembers))
-    .concat(BufLong(curConfigId))
+    .concat(Buf.U64BE(curConfigId))
 }
 
 object ReconfigRequest {
@@ -348,7 +348,7 @@ object ReconfigRequest {
     val BufString(joiningServers,
         BufString(leavingServers,
         BufString(newMembers,
-        BufLong(curConfigId,
+        Buf.U64BE(curConfigId,
         rem
     )))) = buf
     Some(ReconfigRequest(joiningServers, leavingServers, newMembers, curConfigId), rem)
@@ -420,7 +420,7 @@ case class CreateRequest(
     .concat(BufString(path))
     .concat(BufArray(data))
     .concat(BufSeqACL(acl))
-    .concat(BufInt(flags))
+    .concat(Buf.U32BE(flags))
 }
 
 object CreateRequest {
@@ -428,7 +428,7 @@ object CreateRequest {
     val BufString(path,
         BufArray(data,
         BufSeqACL(acl,
-        BufInt(flags,
+        Buf.U32BE(flags,
         rem
     )))) = buf
     Some(CreateRequest(path, data, acl, flags), rem)
@@ -443,12 +443,12 @@ case class DeleteRequest(
   val decodeResponse = DeleteResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufInt(version))
+    .concat(Buf.U32BE(version))
 }
 
 object DeleteRequest {
   def unapply(buf: Buf): Option[(DeleteRequest, Buf)] = {
-    val BufString(path, BufInt(version, rem)) = buf
+    val BufString(path, Buf.U32BE(version, rem)) = buf
     Some(DeleteRequest(path, version), rem)
   }
 }
@@ -503,12 +503,12 @@ case class CheckVersionRequest(
 ) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufInt(version))
+    .concat(Buf.U32BE(version))
 }
 
 object CheckVersionRequest {
   def unapply(buf: Buf): Option[(CheckVersionRequest, Buf)] = {
-    val BufString(path, BufInt(watch, rem)) = buf
+    val BufString(path, Buf.U32BE(watch, rem)) = buf
     Some(CheckVersionRequest(path, watch), rem)
   }
 }
@@ -529,12 +529,12 @@ object GetMaxChildrenRequest {
 case class GetMaxChildrenResponse(
   max: Int
 ) extends Packet {
-  def buf: Buf = BufInt(max)
+  def buf: Buf = Buf.U32BE(max)
 }
 
 object GetMaxChildrenResponse {
   def unapply(buf: Buf): Option[(GetMaxChildrenResponse, Buf)] = {
-    val BufInt(max, rem) = buf
+    val Buf.U32BE(max, rem) = buf
     Some(GetMaxChildrenResponse(max), rem)
   }
 }
@@ -545,12 +545,12 @@ case class SetMaxChildrenRequest(
 ) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufInt(max))
+    .concat(Buf.U32BE(max))
 }
 
 object SetMaxChildrenRequest {
   def unapply(buf: Buf): Option[(SetMaxChildrenRequest, Buf)] = {
-    val BufString(path, BufInt(max, rem)) = buf
+    val BufString(path, Buf.U32BE(max, rem)) = buf
     Some(SetMaxChildrenRequest(path, max), rem)
   }
 }
@@ -606,12 +606,12 @@ case class SetACLRequest(
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufSeqACL(acl))
-    .concat(BufInt(version))
+    .concat(Buf.U32BE(version))
 }
 
 object SetACLRequest {
   def unapply(buf: Buf): Option[(SetACLRequest, Buf)] = {
-    val BufString(path, BufSeqACL(acl, BufInt(version, rem))) = buf
+    val BufString(path, BufSeqACL(acl, Buf.U32BE(version, rem))) = buf
     Some(SetACLRequest(path, acl, version), rem)
   }
 }
@@ -635,14 +635,14 @@ case class WatcherEvent(
   path: String
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(typ))
-    .concat(BufInt(state))
+    .concat(Buf.U32BE(typ))
+    .concat(Buf.U32BE(state))
     .concat(BufString(path))
 }
 
 object WatcherEvent {
   def unapply(buf: Buf): Option[(WatcherEvent, Buf)] = {
-    val BufInt(typ, BufInt(state, BufString(path, rem))) = buf
+    val Buf.U32BE(typ, Buf.U32BE(state, BufString(path, rem))) = buf
     Some(WatcherEvent(typ, state, path), rem)
   }
 }
@@ -650,12 +650,12 @@ object WatcherEvent {
 case class ErrorResponse(
   err: Int
 ) extends Packet {
-  def buf: Buf = BufInt(err)
+  def buf: Buf = Buf.U32BE(err)
 }
 
 object ErrorResponse {
   def unapply(buf: Buf): Option[(ErrorResponse, Buf)] = {
-    val BufInt(err, rem) = buf
+    val Buf.U32BE(err, rem) = buf
     Some(ErrorResponse(err), rem)
   }
 }
@@ -789,12 +789,12 @@ case class CheckWatchesRequest(
   val decodeResponse = CheckWatchesResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufInt(typ))
+    .concat(Buf.U32BE(typ))
 }
 
 object CheckWatchesRequest {
   def unapply(buf: Buf): Option[(CheckWatchesRequest, Buf)] = {
-    val BufString(path, BufInt(typ, rem)) = buf
+    val BufString(path, Buf.U32BE(typ, rem)) = buf
     Some(CheckWatchesRequest(path, typ), rem)
   }
 }
@@ -817,12 +817,12 @@ case class RemoveWatchesRequest(
   val decodeResponse = RemoveWatchesResponse.unapply(_: Buf)
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufInt(typ))
+    .concat(Buf.U32BE(typ))
 }
 
 object RemoveWatchesRequest {
   def unapply(buf: Buf): Option[(RemoveWatchesRequest, Buf)] = {
-    val BufString(path, BufInt(typ, rem)) = buf
+    val BufString(path, Buf.U32BE(typ, rem)) = buf
     Some(RemoveWatchesRequest(path, typ), rem)
   }
 }
@@ -843,14 +843,14 @@ case class LearnerInfo(
   configVersion: Long
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufLong(serverid))
-    .concat(BufInt(protocolVersion))
-    .concat(BufLong(configVersion))
+    .concat(Buf.U64BE(serverid))
+    .concat(Buf.U32BE(protocolVersion))
+    .concat(Buf.U64BE(configVersion))
 }
 
 object LearnerInfo {
   def unapply(buf: Buf): Option[(LearnerInfo, Buf)] = {
-    val BufLong(serverid, BufInt(protocolVersion, BufLong(configVersion, rem))) = buf
+    val Buf.U64BE(serverid, Buf.U32BE(protocolVersion, Buf.U64BE(configVersion, rem))) = buf
     Some(LearnerInfo(serverid, protocolVersion, configVersion), rem)
   }
 }
@@ -862,16 +862,16 @@ case class QuorumPacket(
   authinfo: Seq[Id]
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(typ))
-    .concat(BufLong(zxid))
+    .concat(Buf.U32BE(typ))
+    .concat(Buf.U64BE(zxid))
     .concat(BufArray(data))
     .concat(BufSeqId(authinfo))
 }
 
 object QuorumPacket {
   def unapply(buf: Buf): Option[(QuorumPacket, Buf)] = {
-    val BufInt(typ,
-        BufLong(zxid,
+    val Buf.U32BE(typ,
+        Buf.U64BE(zxid,
         BufArray(data,
         BufSeqId(authinfo,
         rem
@@ -886,14 +886,14 @@ case class FileHeader(
   dbid: Long
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(magic))
-    .concat(BufInt(version))
-    .concat(BufLong(dbid))
+    .concat(Buf.U32BE(magic))
+    .concat(Buf.U32BE(version))
+    .concat(Buf.U64BE(dbid))
 }
 
 object FileHeader {
   def unapply(buf: Buf): Option[(FileHeader, Buf)] = {
-    val BufInt(magic, BufInt(version, BufLong(dbid, rem))) = buf
+    val Buf.U32BE(magic, Buf.U32BE(version, Buf.U64BE(dbid, rem))) = buf
     Some(FileHeader(magic, version, dbid), rem)
   }
 }
@@ -906,20 +906,20 @@ case class TxnHeader(
   typ: Int
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufLong(clientId))
-    .concat(BufInt(cxid))
-    .concat(BufLong(zxid))
-    .concat(BufLong(time))
-    .concat(BufInt(typ))
+    .concat(Buf.U64BE(clientId))
+    .concat(Buf.U32BE(cxid))
+    .concat(Buf.U64BE(zxid))
+    .concat(Buf.U64BE(time))
+    .concat(Buf.U32BE(typ))
 }
 
 object TxnHeader {
   def unapply(buf: Buf): Option[(TxnHeader, Buf)] = {
-    val BufLong(clientId,
-        BufInt(cxid,
-        BufLong(zxid,
-        BufLong(time,
-        BufInt(typ,
+    val Buf.U64BE(clientId,
+        Buf.U32BE(cxid,
+        Buf.U64BE(zxid,
+        Buf.U64BE(time,
+        Buf.U32BE(typ,
         rem
     ))))) = buf
     Some(TxnHeader(clientId, cxid, zxid, time, typ), rem)
@@ -951,7 +951,7 @@ case class CreateTxn(
     .concat(BufArray(data))
     .concat(BufSeqACL(acl))
     .concat(BufBool(ephemeral))
-    .concat(BufInt(parentCVersion))
+    .concat(Buf.U32BE(parentCVersion))
 }
 
 object CreatTxn {
@@ -960,7 +960,7 @@ object CreatTxn {
         BufArray(data,
         BufSeqACL(acl,
         BufBool(ephemeral,
-        BufInt(parentCVersion,
+        Buf.U32BE(parentCVersion,
         rem
     ))))) = buf
     Some(CreateTxn(path, data, acl, ephemeral, parentCVersion), rem)
@@ -988,12 +988,12 @@ case class SetDataTxn(
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufArray(data))
-    .concat(BufInt(version))
+    .concat(Buf.U32BE(version))
 }
 
 object SetDataTxn {
   def unapply(buf: Buf): Option[(SetDataTxn, Buf)] = {
-    val BufString(path, BufArray(data, BufInt(version, rem))) = buf
+    val BufString(path, BufArray(data, Buf.U32BE(version, rem))) = buf
     Some(SetDataTxn(path, data, version), rem)
   }
 }
@@ -1004,12 +1004,12 @@ case class CheckVersionTxn(
 ) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufInt(version))
+    .concat(Buf.U32BE(version))
 }
 
 object CheckVersionTxn {
   def unapply(buf: Buf): Option[(CheckVersionTxn, Buf)] = {
-    val BufString(path, BufInt(version, rem)) = buf
+    val BufString(path, Buf.U32BE(version, rem)) = buf
     Some(CheckVersionTxn(path, version), rem)
   }
 }
@@ -1022,12 +1022,12 @@ case class SetACLTxn(
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
     .concat(BufSeqACL(acl))
-    .concat(BufInt(version))
+    .concat(Buf.U32BE(version))
 }
 
 object SetACLTxn {
   def unapply(buf: Buf): Option[(SetACLTxn, Buf)] = {
-    val BufString(path, BufSeqACL(acl, BufInt(version, rem))) = buf
+    val BufString(path, BufSeqACL(acl, Buf.U32BE(version, rem))) = buf
     Some(SetACLTxn(path, acl, version), rem)
   }
 }
@@ -1038,12 +1038,12 @@ case class SetMaxChildrenTxn(
 ) extends Packet {
   def buf: Buf = Buf.Empty
     .concat(BufString(path))
-    .concat(BufInt(max))
+    .concat(Buf.U32BE(max))
 }
 
 object SetMaxChildrenTxn {
   def unapply(buf: Buf): Option[(SetMaxChildrenTxn, Buf)] = {
-    val BufString(path, BufInt(max, rem)) = buf
+    val BufString(path, Buf.U32BE(max, rem)) = buf
     Some(SetMaxChildrenTxn(path, max), rem)
   }
 }
@@ -1051,12 +1051,12 @@ object SetMaxChildrenTxn {
 case class CreateSessionTxn(
   timeOut: Int
 ) extends Packet {
-  def buf: Buf = BufInt(timeOut)
+  def buf: Buf = Buf.U32BE(timeOut)
 }
 
 object CreateSessionTxn {
   def unapply(buf: Buf): Option[(CreateSessionTxn, Buf)] = {
-    val BufInt(timeOut, rem) = buf
+    val Buf.U32BE(timeOut, rem) = buf
     Some(CreateSessionTxn(timeOut), rem)
   }
 }
@@ -1064,12 +1064,12 @@ object CreateSessionTxn {
 case class ErrorTxn(
   err: Int
 ) extends Packet {
-  def buf: Buf = BufInt(err)
+  def buf: Buf = Buf.U32BE(err)
 }
 
 object ErrorTxn {
   def unapply(buf: Buf): Option[(ErrorTxn, Buf)] = {
-    val BufInt(err, rem) = buf
+    val Buf.U32BE(err, rem) = buf
     Some(ErrorTxn(err), rem)
   }
 }
@@ -1079,13 +1079,13 @@ case class Txn(
   data: Array[Byte]
 ) extends Packet {
   def buf: Buf = Buf.Empty
-    .concat(BufInt(typ))
+    .concat(Buf.U32BE(typ))
     .concat(BufArray(data))
 }
 
 object Txn {
   def unapply(buf: Buf): Option[(Txn, Buf)] = {
-    val BufInt(typ, BufArray(data, rem)) = buf
+    val Buf.U32BE(typ, BufArray(data, rem)) = buf
     Some(Txn(typ, data), rem)
   }
 }
