@@ -2,7 +2,6 @@ package com.twitter.finagle.zookeeper
 
 import com.twitter.finagle.netty3.ChannelBufferBuf
 import com.twitter.finagle.transport.{Transport => FTransport}
-import com.twitter.finagle.zookeeper.protocol.BufArray
 import com.twitter.io.Buf
 import com.twitter.util.{Future, Time}
 import org.jboss.netty.buffer.{ChannelBuffer, ChannelBuffers}
