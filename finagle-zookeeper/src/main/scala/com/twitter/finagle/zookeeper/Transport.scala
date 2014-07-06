@@ -1,6 +1,6 @@
 package com.twitter.finagle.zookeeper
 
-import com.twitter.finagle.netty3.ChannelBufferBuf
+import com.twitter.finagle.netty3.{BufChannelBuffer, ChannelBufferBuf}
 import com.twitter.finagle.transport.{Transport => FTransport}
 import com.twitter.io.Buf
 import com.twitter.util.{Future, Time}
@@ -17,14 +17,12 @@ case class Transport(
 
   def write(req: Buf): Future[Unit] = {
     val framedReq = Buf.U32BE(req.length).concat(req)
-    val bytes = new Array[Byte](framedReq.length)
-    framedReq.write(bytes, 0)
-    trans.write(ChannelBuffers.wrappedBuffer(bytes))
+    trans.write(BufChannelBuffer(framedReq))
   }
 
   // the dispatcher runs a single read loop. this is safe
   def read(): Future[Buf] =
-    read(4) flatMap { case Buf.U32BE(len, _) => read(len) }
+    read(4) flatMap { case Buf.U32BE(len, Buf.Empty) => read(len) }
 
   @volatile private[this] var buf = Buf.Empty
   private[this] def read(len: Int): Future[Buf] =
