@@ -105,11 +105,9 @@ class WatchManager(
       }
     }
 
-    checkWatch(watch.watchType, path) onSuccess { _ =>
-      doRemove()
-    } onFailure { _ =>
-      if (local) doRemove()
-    }
+    checkWatch(watch.watchType, path)
+      .onSuccess { _ => doRemove() }
+      .onFailure { _ => if (local) doRemove() }
   }
 
   def addWatch(typ: WatchType, path: String): Watch = {

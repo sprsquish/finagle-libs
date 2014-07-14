@@ -161,6 +161,6 @@ private[finagle] class ClientDispatcher(
   }
 
   override def close(deadline: Time): Future[Unit] = {
-    trans.close(deadline) onSuccess { _ => started.set(false) }
+    trans.close(deadline) ensure started.set(false)
   }
 }
