@@ -126,8 +126,6 @@ class WebSocketServerHandler extends WebSocketHandler {
         ch.setReadable(false)
         (binaryMessagesBroker ! frame.getBinaryData.array) ensure { ch.setReadable(true) }
 
-      case _: PongWebSocketFrame => ()
-
       case invalid =>
         Channels.fireExceptionCaught(ctx,
           new IllegalArgumentException("invalid message \"%s\"".format(invalid)))
