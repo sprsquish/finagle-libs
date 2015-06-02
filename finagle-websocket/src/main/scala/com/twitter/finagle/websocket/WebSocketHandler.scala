@@ -2,7 +2,8 @@ package com.twitter.finagle.websocket
 
 import com.twitter.concurrent.{Offer, Broker}
 import com.twitter.finagle.netty3.Conversions._
-import com.twitter.util.{Promise, Return, Throw, Try}
+import com.twitter.finagle.util.DefaultTimer
+import com.twitter.util.{Duration, Promise, Return, Throw, Try}
 import java.net.URI
 import org.jboss.netty.buffer.ChannelBuffers
 import org.jboss.netty.channel._
@@ -49,6 +50,13 @@ class WebSocketHandler extends SimpleChannelHandler {
               val writeFuture = Channels.future(ctx.getChannel)
               Channels.write(ctx, writeFuture, frame)
               write(ctx, sock, Some(writeFuture.toTwitterFuture.toOffer))
+          },
+          timeout(sock.idlePingTimeout) map {
+            _ =>
+              val frame = new PingWebSocketFrame()
+              val writeFuture = Channels.future(ctx.getChannel)
+              Channels.write(ctx, writeFuture, frame)
+              write(ctx, sock, Some(writeFuture.toTwitterFuture.toOffer))
           }
         )
     }
@@ -56,7 +64,18 @@ class WebSocketHandler extends SimpleChannelHandler {
   }
 
   override def channelClosed(ctx: ChannelHandlerContext, e: ChannelStateEvent) {
+    super.channelClosed(ctx, e)
     closer.setValue(())
+  }
+
+  // Offer.timeout(Duration.Top) fires immediately but it's logically what we
+  // want for an infinite timeout.
+  def timeout(d: Duration): Offer[Unit] = {
+    if (Duration.Top.compare(d) == 0) {
+      Offer.never
+    } else {
+      Offer.timeout(d)(DefaultTimer.twitter)
+    }
   }
 }
 
@@ -95,6 +114,8 @@ class WebSocketServerHandler extends WebSocketHandler {
       case frame: PingWebSocketFrame =>
         ctx.getChannel.write(new PongWebSocketFrame(frame.getBinaryData))
 
+      case frame: PongWebSocketFrame => { }
+
       case frame: TextWebSocketFrame =>
         val ch = ctx.getChannel
         ch.setReadable(false)
@@ -122,6 +143,12 @@ class WebSocketServerHandler extends WebSocketHandler {
       case _: CloseWebSocketFrame =>
         ctx.sendDownstream(e)
 
+      case _: PingWebSocketFrame =>
+        ctx.sendDownstream(e)
+
+      case _: PongWebSocketFrame =>
+        ctx.sendDownstream(e)
+
       case invalid =>
         Channels.fireExceptionCaught(ctx,
           new IllegalArgumentException("invalid message \"%s\"".format(invalid)))
@@ -144,6 +171,8 @@ class WebSocketClientHandler extends WebSocketHandler {
 
       case frame: PingWebSocketFrame =>
         ctx.getChannel.write(new PongWebSocketFrame(frame.getBinaryData))
+
+      case frame: PongWebSocketFrame => { }
 
       case frame: TextWebSocketFrame =>
         val ch = ctx.getChannel
@@ -186,6 +215,12 @@ class WebSocketClientHandler extends WebSocketHandler {
         ctx.sendDownstream(e)
 
       case _: CloseWebSocketFrame =>
+        ctx.sendDownstream(e)
+
+      case _: PingWebSocketFrame =>
+        ctx.sendDownstream(e)
+
+      case _: PongWebSocketFrame =>
         ctx.sendDownstream(e)
 
       case invalid =>
