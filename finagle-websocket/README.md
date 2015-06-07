@@ -46,7 +46,7 @@ sbt
     import com.twitter.concurrent.Broker
     import com.twitter.finagle.{HttpWebSocket, Service}
     import com.twitter.finagle.websocket.WebSocket
-    import com.twitter.util.Future
+    import com.twitter.util.{Future, Await}
     import java.net.InetSocketAddress
 
     val server = HttpWebSocket.serve(":8080", new Service[WebSocket, WebSocket] {
@@ -57,3 +57,4 @@ sbt
         Future.value(socket)
       }
     })
+    Await.ready(server)
